@@ -1,6 +1,6 @@
 # GroupChat — real-time group chat (Node.js · Express · Socket.io · Redis)
 
-[![ci-cd](https://github.com/gurava947/InChatApp/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/gurava947/InChatApp/actions/workflows/ci-cd.yml)
+[![ci-cd](https://github.com/gurava947/ChatMainFinalApp/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/gurava947/ChatMainFinalApp/actions/workflows/ci-cd.yml)
 
 A production-shaped group chat: multi-replica Socket.io servers sharing room state through Redis,
 Nginx in front, containerised, autoscaled on Kubernetes, and delivered by a CI/CD pipeline.
@@ -252,7 +252,7 @@ definition from the repo, so the deploy stays under the same version control as 
 
 1. <https://console.upstash.com> → *Create Redis* (free plan) → copy the **Redis URL**, which looks
    like `rediss://default:xxxx@sgp-1-23.upstash.io:6379`. TLS (`rediss://`) is what ioredis expects.
-2. <https://dashboard.render.com> → *New → Blueprint* → connect `gurava947/InChatApp`. Render lists the
+2. <https://dashboard.render.com> → *New → Blueprint* → connect `gurava947/ChatMainFinalApp`. Render lists the
    service in `render.yaml` and asks for `REDIS_URL` because it is marked `sync: false`.
 3. Paste the Upstash URL, deploy, open the `https://<name>.onrender.com` link in two tabs. The two tabs
    share rooms, presence and receipts through Upstash even though they land on the same process, and a
@@ -292,10 +292,20 @@ What the repo does to fit that model:
 - The static folder is named `legacy-ui/` and **must not be called `public/`**: Vercel serves a root
   `public/` from its own filesystem layer *before* rewrites, so `/` would answer with the old
   no-framework page and the React app would be unreachable even though the function is healthy.
-- `installCommand` and `buildCommand` in `vercel.json` are what put `client/dist` on the function: the
-  root install is production dependencies only, then Vercel changes into `client/` to install its
-  committed lockfile before building. `dist/` is not in git. Without them a git-driven build produces
-  a function with no UI to serve.
+- The production project uses the repository-root Express/Socket.IO backend and Vite frontend, not the
+  separate, still-in-development Next.js app under `inchat/`. In Vercel **Settings → Build and
+  Development Settings**, set **Root Directory** to `.` (repository root), **Framework Preset** to
+  **Other**, **Install Command** to `npm ci --omit=dev && cd client && npm ci`, **Build Command** to
+  `npm run build:client`, and **Output Directory** to `client/dist`. The install command depends on
+  that root: if the log says `cd: client: No such file or directory`, Vercel is building from the
+  wrong root (or using a dashboard override), not a missing folder in this commit. `client/` and its
+  committed lockfile are present at the repository root.
+- `dist/` is generated and not in git. The root install omits backend development tools; the client
+  install includes its locked Vite build dependencies. Set the Vercel Node.js version to 22.x to match
+  the root `package.json`.
+- No `.npmrc` or `cache-dir` setting is tracked in the repository. The `Unknown env config "cache-dir"`
+  npm warning is separate from the missing-directory failure; if it persists, remove the unsupported
+  `npm_config_cache-dir` setting from the Vercel project/team environment or build configuration.
 - WebSockets are the first transport; a socket lives at most `maxDuration`, then the client reconnects
   and repaints the transcript from Redis. Presence and rooms are rebuilt on that reconnect.
 - `REDIS_URL` is what makes two tabs the same conversation. Without it the app logs a warning and falls
@@ -312,13 +322,11 @@ What the repo does to fit that model:
 
 To have Vercel build from the repository instead of `vercel deploy --prod` from a working copy, connect it
 once in the dashboard - *Project → Settings → Git → Connect to GitHub* → `gurava947/ChatMainFinalApp`, production
-branch `main` (the `vercel git connect` CLI does the same thing). Set *Project → Settings → Build and
-Development Settings → Root Directory* to `.` (the repository root), not `inchat/`. The Vercel install
-and build commands expect the root `package.json` and sibling `client/` directory; a build started
-inside `inchat/` cannot find `client/` and targets the separate Next.js application. Everything the platform needs
-(`api/index.js`, `vercel.json`, the environment variables) is in the repo, so a git-driven deploy behaves
-exactly like the CLI one. Two settings are project-level and are not in the repo, so a new project needs
-the Upstash integration too, because `REDIS_URL` is what makes more than one instance share a room.
+branch `main` (the `vercel git connect` CLI does the same thing). Everything the platform needs
+(`api/index.js` and `vercel.json`) is in the repo, so a git-driven deploy behaves exactly like the CLI
+one. The **Root Directory** and secrets are project-level settings, not repository files. Configure
+`REDIS_URL` with the Upstash integration in Vercel; without it, room state falls back to per-instance
+memory and is not reliable across function instances. Never commit the live Redis URL.
 
 Same ephemeral-disk caveat as Render - attachments live in `/tmp` and vanish with the instance, so point
 `MEDIA_*` at object storage before relying on them. For an always-on socket server with no such
