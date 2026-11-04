@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: groupchat-app
+  namespace: groupchat
+  labels:
+    app.kubernetes.io/name: groupchat-app
+    app.kubernetes.io/component: realtime-server
+spec:
+  # Floor for HPA: two replicas also prove the Redis pub/sub adapter works.
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: groupchat-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: groupchat-app
+        app.kubernetes.io/component: realtime-server
+    spec:
+      serviceAccountName: groupchat-app
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        # RWX volumes are usually exported root-owned; fsGroup makes the
+        # uploads mount writable for the node user.
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      # Sleep before shutdown so the Service endpoints drop this pod first;
+      # otherwise in-flight sockets get connection resets during a rollout.
+      containers:
+        - name: app
+          image: ghcr.io/your-org/groupchat-realtime:replace-in-ci
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef: { name: groupchat-config }
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef: { name: groupchat-secret, key: REDIS_URL }
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            # Checks Redis, so a pod without cache stops receiving traffic.
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 8"]
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: "1", memory: 768Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            # The root filesystem is read-only, and two replicas must see the
+            # same attachments, so uploads live on the RWX volume in storage.yaml.
+            - name: uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: groupchat-uploads
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: groupchat-app
+  namespace: groupchat
+  automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: groupchat-app
+  namespace: groupchat
+  labels:
+    app.kubernetes.io/name: groupchat-app
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: groupchat-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Direct external access for clusters without an ingress controller. When the
+# Ingress is used, scale this down / delete it to avoid a second public path.
+apiVersion: v1
+kind: Service
+metadata:
+  name: groupchat-app-lb
+  namespace: groupchat
+  labels:
+    app.kubernetes.io/name: groupchat-app
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: groupchat-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

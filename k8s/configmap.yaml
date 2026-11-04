@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: groupchat-config
+  namespace: groupchat
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  # Public origins allowed to call the API and open sockets.
+  CORS_ORIGIN: "https://chat.example.com"
+  USE_MEMORY_STORE: "false"
+  # Traffic control
+  RATE_LIMIT_WINDOW_MS: "60000"
+  RATE_LIMIT_API_MAX: "120"
+  RATE_LIMIT_SEND_MAX: "20"
+  RATE_LIMIT_SOCKET_CONNECT_MAX: "30"
+  # Presence + heartbeat
+  SOCKET_HEARTBEAT_MS: "15000"
+  PRESENCE_TTL_MS: "45000"
+  # Cache
+  MESSAGE_CACHE_SIZE: "200"
+  MESSAGE_CACHE_TTL_S: "3600"
+  SESSION_TTL_S: "43200"
+  # Attachments. UPLOAD_DIR must be a path every replica can read and write,
+  # i.e. a ReadWriteMany volume (see storage.yaml) - not an emptyDir.
+  UPLOAD_DIR: "/app/uploads"
+  MEDIA_MAX_BYTES: "52428800"
+  MEDIA_MAX_PER_MESSAGE: "5"
+  MEDIA_TTL_S: "604800"
+  # Behind the ingress there is exactly one proxy hop.
+  TRUST_PROXY_HOPS: "1"
+  LOG_LEVEL: "info"

@@ -1,0 +1,304 @@
+name: ci-cd
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# A second push to main cancels the in-flight pipeline instead of queueing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  quality:
+    name: Lint + unit/integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit + integration tests (in-memory store)
+        run: npm test -- --ci --coverage
+        env:
+          CI: true
+
+      - name: Dependency vulnerabilities
+        run: npm run audit:prod
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  redis-contract:
+    name: Redis-backed state (real server)
+    runs-on: ubuntu-latest
+    # The deployment topology assumes rooms and presence live outside the
+    # process; this job proves that contract against a live Redis.
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+
+      - name: Run Redis integration tests
+        id: redis
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npx jest --ci --runInBand --verbose tests/integration/redis-store.live.test.js > redis.log 2>&1
+          code=$?
+          # Step stdout is only readable with repository admin rights, so the
+          # result travels in the job summary and the annotations instead.
+          {
+            echo "### Live Redis contract tests"
+            echo '```'
+            tail -n 45 redis.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" -ne 0 ]; then
+            grep -E "✕|●|Expected|Received|Error|error" redis.log | head -n 15 | sed 's/%/%25/g' | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+          exit "$code"
+
+  inchat:
+    name: InChat (Next.js) quality gates
+    runs-on: ubuntu-latest
+    # The Next.js app is a separate deliverable: its gates run here and nothing
+    # in the Express image pipeline depends on them, so a failure in the new app
+    # can never block a fix to the one users are on today.
+    defaults:
+      run:
+        working-directory: inchat
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: inchat/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Types
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Migration SQL grammar
+        run: npm run verify:sql
+
+      - name: Production build
+        # Runs with no Supabase credentials on purpose: a pull request from a
+        # fork has none, and the app must compile and render its own "not
+        # configured" state rather than depend on a secret to build.
+        run: npm run build
+
+  image:
+    name: Build + scan + push
+    runs-on: ubuntu-latest
+    needs: [quality, redis-contract]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Normalise the image reference
+        id: ref
+        # GHCR rejects uppercase path segments, and repository names can have them.
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/groupchat-realtime" >> "$GITHUB_OUTPUT"
+
+      - name: Docker metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.ref.outputs.image }}
+          tags: |
+            type=ref,event=pr
+            type=sha,format=long,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan the source tree for vulnerable dependencies
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          # Only the vulnerability scanner gates here. Trivy also reads secret and
+          # misconfiguration rules off the working tree, and this repo ships a
+          # placeholder k8s/secret.yaml on purpose, which that rule reports as a
+          # CRITICAL finding on every build.
+          scanners: vuln
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Report secrets and misconfigurations
+        uses: aquasecurity/trivy-action@0.35.0
+        continue-on-error: true
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          format: table
+          exit-code: '0'
+
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan the built image
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.ref.outputs.image }}:sha-${{ github.sha }}
+          scanners: vuln
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  cluster-access:
+    name: Detect a deploy target
+    runs-on: ubuntu-latest
+    needs: [image]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      deployable: ${{ steps.probe.outputs.deployable }}
+    steps:
+      # A job-level `if` cannot read `secrets` or `env`, so the only way to keep
+      # deploy skipped - rather than failed - before a cluster exists is to
+      # probe the secret in a shell step and pass the answer as an output.
+      - name: Probe for a kubeconfig
+        id: probe
+        env:
+          KUBE_CONFIG_BASE64: ${{ secrets.KUBE_CONFIG_BASE64 }}
+        run: |
+          if [ -n "$KUBE_CONFIG_BASE64" ]; then
+            echo "deployable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deployable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=No deploy target::The image is published, but KUBE_CONFIG_BASE64 is unset: GitHub has no cluster to roll out to. Add the secret (or run docker compose up --build / kubectl apply -k k8s/ yourself) and this job turns on."
+          fi
+
+  deploy:
+    name: Rolling deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: [image, cluster-access]
+    # GitHub hosts the pipeline and the image; it cannot host the runtime. This
+    # job stays skipped until KUBE_CONFIG_BASE64 points at a real cluster.
+    if: needs.cluster-access.outputs.deployable == 'true'
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl + kustomize
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+
+      - uses: azure/setup-kustomize@v1
+        with:
+          kustomize-version: v5.4.3
+
+      - name: Write the cluster kubeconfig
+        # KUBE_CONFIG_BASE64 is the only secret the pipeline needs for CD.
+        run: |
+          mkdir -p ~/.kube
+          printf '%s' "$KUBE_CONFIG_BASE64" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+        env:
+          KUBE_CONFIG_BASE64: ${{ secrets.KUBE_CONFIG_BASE64 }}
+
+      - name: Pin the image digest and apply
+        run: |
+          cd k8s
+          kustomize edit set image "ghcr.io/your-org/groupchat-realtime=${{ needs.image.outputs.image }}@${{ needs.image.outputs.digest }}"
+          kubectl apply -k .
+
+      - name: Wait for the rollout
+        run: |
+          kubectl -n groupchat rollout status deployment/groupchat-app --timeout=180s
+          kubectl -n groupchat rollout status deployment/groupchat-redis --timeout=120s
+
+      - name: Smoke test through the service
+        run: |
+          kubectl -n groupchat port-forward svc/groupchat-app 8080:80 >/tmp/pf.log 2>&1 &
+          PF_PID=$!
+          trap 'kill $PF_PID' EXIT
+          sleep 3
+          curl -fsS http://127.0.0.1:8080/healthz
+          curl -fsS http://127.0.0.1:8080/readyz
+          curl -fsS -X POST http://127.0.0.1:8080/api/sessions \
+            -H 'content-type: application/json' \
+            -d '{"displayName":"CI Smoke"}'
+
+      - name: Roll back if the new pods are not healthy
+        if: failure()
+        run: kubectl -n groupchat rollout undo deployment/groupchat-app

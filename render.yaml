@@ -1,0 +1,40 @@
+# Render blueprint - https://render.com/docs/blueprint-spec
+#
+# Connecting gurava947/InChatApp to Render reads this file, so the deploy lives in
+# the repository instead of someone's dashboard memory.
+#
+# Required before the first deploy: create a free Redis database at https://
+# console.upstash.com and paste its "Redis URL" (rediss://...) into REDIS_URL.
+# Render asks for any non-sync variable when the service is created.
+services:
+  - type: web
+    name: groupchat-realtime
+    region: singapore # closest Render region to India; change if you prefer another
+    plan: free
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    branch: main
+    # Every push to main rebuilds and rolls out; the health probe keeps traffic
+    # off the new instance until /readyz answers.
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: REDIS_URL
+        # sync: false keeps this a write-once secret in the Render UI.
+        sync: false
+      - key: USE_MEMORY_STORE
+        value: 'false'
+      # Render terminates TLS and proxies to the container, which is the one hop
+      # the rate limiter and the logs need to see through to reach real clients.
+      - key: TRUST_PROXY_HOPS
+        value: '1'
+      # The free instance has 512 MB total; the image default leaves too little
+      # headroom for the runtime itself and would get the process OOM-killed.
+      - key: NODE_OPTIONS
+        value: '--max-old-space-size=400'
+      - key: LOG_LEVEL
+        value: info
+      # CORS_ORIGIN is deliberately absent: src/config/env.js falls back to
+      # RENDER_EXTERNAL_HOSTNAME, so the socket handshake is allowed by the
+      # service's own onrender.com address without pasting it in twice.

@@ -1,0 +1,13 @@
+node_modules/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+dist/
+k8s/local/
+uploads/
+.vercel
+.playwright-mcp/
+*.tsbuildinfo

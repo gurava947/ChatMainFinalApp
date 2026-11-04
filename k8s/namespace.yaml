@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: groupchat
+  labels:
+    app.kubernetes.io/name: groupchat
+    app.kubernetes.io/part-of: realtime-chat

@@ -1,0 +1,8 @@
+{
+  "routes": [
+    { "path": "/", "title": "InChat — Chats" },
+    { "path": "/updates", "title": "InChat — Updates" },
+    { "path": "/shorts", "title": "InChat — Shorts" },
+    { "path": "/calls", "title": "InChat — Calls" }
+  ]
+}

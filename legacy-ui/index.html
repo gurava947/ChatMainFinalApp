@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="Real-time group chat with live presence, read receipts and media sharing." />
+  <title>GChat · Real-time</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <!-- Join screen -->
+    <section id="join-screen" class="join" aria-labelledby="join-title">
+      <form id="join-form" class="join__card" autocomplete="off">
+        <span class="join__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" class="bolt"><path d="M13 2 4.5 13.5H11l-1 8.5 9-12h-6.5z"/></svg>
+        </span>
+        <h1 id="join-title" class="join__title">GChat</h1>
+        <p class="join__subtitle">Lightning-fast rooms with live presence and read receipts.</p>
+
+        <label class="field">
+          <span class="field__label">Display name</span>
+          <input id="display-name" name="displayName" class="field__input" type="text"
+                 maxlength="32" minlength="2" required placeholder="e.g. Arjun" />
+        </label>
+
+        <label class="field">
+          <span class="field__label">Room</span>
+          <input id="room-name" name="room" class="field__input" type="text"
+                 maxlength="64" required placeholder="e.g. engineering" value="general" />
+        </label>
+
+        <button type="submit" class="btn btn--primary btn--block">
+          <span data-role="submit-label">Join room</span>
+        </button>
+        <p id="join-error" class="join__error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <!-- Chat screen -->
+    <main id="chat-screen" class="chat" hidden>
+      <header class="chat__header">
+        <button id="back-button" class="icon-btn icon-btn--back" type="button" title="Back">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4 7 12l8 8"/></svg>
+          <span class="sr-only">Back</span>
+        </button>
+
+        <button id="presence-toggle" class="chat__identity" type="button"
+                aria-expanded="false" aria-controls="presence-panel">
+          <span class="avatar avatar--room" aria-hidden="true" data-role="room-avatar">G</span>
+          <span class="chat__identity-text">
+            <span id="room-title" class="chat__room">general</span>
+            <span id="connection-status" class="chat__status" data-state="connecting" role="status">
+              <span class="dot" aria-hidden="true"></span>
+              <span data-role="status-text">Connecting…</span>
+            </span>
+          </span>
+        </button>
+
+        <div class="chat__actions">
+          <span class="pill" title="People online">
+            <span data-role="online-count">0</span><span class="sr-only"> online</span>
+          </span>
+          <button id="sound-toggle" class="icon-btn" type="button" aria-pressed="true" title="Message sound">
+            <span aria-hidden="true">🔔</span><span class="sr-only">Toggle message sound</span>
+          </button>
+          <button id="desktop-toggle" class="icon-btn" type="button" aria-pressed="false" title="Desktop notifications">
+            <span aria-hidden="true">📣</span><span class="sr-only">Toggle desktop notifications</span>
+          </button>
+          <button id="theme-toggle" class="icon-btn" type="button" title="Switch theme">
+            <span aria-hidden="true" data-role="theme-icon">☾</span><span class="sr-only">Switch light or dark theme</span>
+          </button>
+          <button id="menu-toggle" class="icon-btn" type="button" title="Menu"
+                  aria-haspopup="true" aria-expanded="false" aria-controls="app-menu">
+            <span aria-hidden="true">⋮</span><span class="sr-only">Open menu</span>
+          </button>
+          <button id="leave-button" class="icon-btn icon-btn--exit" type="button" title="Leave room">
+            <span aria-hidden="true">⏻</span><span class="sr-only">Leave room</span>
+          </button>
+        </div>
+      </header>
+
+      <nav id="app-menu" class="menu" hidden aria-label="Room menu">
+        <button class="menu__item" type="button" data-action="self">Message yourself</button>
+        <button class="menu__item" type="button" data-action="note">Personal note</button>
+        <button class="menu__item" type="button" data-action="library">Media library</button>
+        <button class="menu__item" type="button" data-action="hd" role="menuitemcheckbox" aria-checked="false">
+          HD media <span class="menu__hint" data-role="hd-state">off</span>
+        </button>
+        <button class="menu__item" type="button" data-action="queue" hidden>
+          Waiting to send <span class="menu__hint" data-role="queue-count">0</span>
+        </button>
+      </nav>
+
+      <div class="chat__body">
+        <section class="chat__stream-wrap" aria-live="polite" aria-relevant="additions">
+          <ol id="message-list" class="messages"></ol>
+
+          <button id="jump-to-latest" class="jump" type="button" hidden>
+            <span data-role="jump-label">New messages</span>
+          </button>
+        </section>
+
+        <aside id="presence-panel" class="presence" hidden aria-labelledby="presence-title">
+          <h3 id="presence-title" class="presence__title">In this room</h3>
+          <ul id="presence-list" class="presence__list"></ul>
+        </aside>
+
+        <aside id="library-panel" class="library" hidden aria-labelledby="library-title">
+          <header class="library__head">
+            <h3 id="library-title" class="library__title">Media library</h3>
+            <button id="library-close" class="icon-btn" type="button" aria-label="Close library">×</button>
+          </header>
+          <div class="library__tabs" role="tablist" aria-label="Library views">
+            <button class="library__tab" type="button" role="tab" aria-selected="true" data-tab="recents">Recents</button>
+            <button class="library__tab" type="button" role="tab" aria-selected="false" data-tab="media">Media</button>
+            <button class="library__tab" type="button" role="tab" aria-selected="false" data-tab="folders">Folders</button>
+          </div>
+          <ul class="library__list" id="library-list"></ul>
+          <p class="library__empty" id="library-empty" hidden>Nothing shared in this room yet.</p>
+        </aside>
+      </div>
+
+      <div class="dock">
+        <p id="queue-banner" class="queue" hidden>
+          <span aria-hidden="true">⏳</span>
+          <span data-role="queue-text">1 message waiting for a connection</span>
+          <button id="queue-retry" class="queue__retry" type="button">Send now</button>
+        </p>
+
+        <p id="typing-indicator" class="typing" hidden>
+          <span class="typing__dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span data-role="typing-name">Someone</span> is typing
+        </p>
+
+        <ul id="attach-tray" class="tray" hidden></ul>
+
+        <div id="recorder" class="recorder" hidden>
+          <span class="recorder__pulse" aria-hidden="true"></span>
+          <span class="recorder__time" data-role="rec-time">0:00</span>
+          <canvas class="recorder__meter" data-role="rec-meter" width="160" height="26"></canvas>
+          <button id="recorder-cancel" class="btn btn--ghost" type="button">Cancel</button>
+          <button id="recorder-send" class="btn btn--primary" type="button">Send note</button>
+        </div>
+
+        <form id="composer" class="composer" autocomplete="off">
+          <input id="attach-input" class="visually-hidden" type="file" multiple />
+
+          <button id="attach-button" class="icon-btn icon-btn--attach" type="button"
+                  title="Camera, location, contact, documents, poll or event"
+                  aria-haspopup="dialog" aria-controls="attach-sheet">
+            <span aria-hidden="true">+</span><span class="sr-only">Add to message</span>
+          </button>
+
+          <textarea id="message-input" class="composer__input" rows="1"
+                    placeholder="Message" aria-label="Message"></textarea>
+
+          <button id="camera-button" class="icon-btn icon-btn--camera" type="button" title="Take a photo">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 8h2.5L8 5.5h8L17.5 8H20v11H4z"/><circle cx="12" cy="13" r="3.5"/>
+            </svg>
+            <span class="sr-only">Take a photo</span>
+          </button>
+
+          <button id="voice-button" class="icon-btn icon-btn--voice" type="button" title="Record a voice note">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/>
+              <path d="M6 11a6 6 0 0 0 12 0M12 17v4"/>
+            </svg>
+            <span class="sr-only">Record a voice note</span>
+          </button>
+
+          <button id="send-button" class="send-btn" type="submit" title="Send">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5l4 8.5-4 8.5Z"/></svg>
+            <span class="sr-only">Send message</span>
+          </button>
+        </form>
+        <p id="composer-hint" class="hint"><span data-role="char-count">0</span> characters</p>
+      </div>
+    </main>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite" aria-relevant="additions"></div>
+
+  <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Attachment preview">
+    <button id="lightbox-close" class="lightbox__close" type="button" aria-label="Close preview">×</button>
+    <div id="lightbox-stage" class="lightbox__stage"></div>
+    <p id="lightbox-caption" class="lightbox__caption"></p>
+  </div>
+
+  <template id="message-template">
+    <li class="msg">
+      <span class="avatar" data-role="avatar" aria-hidden="true"></span>
+      <div class="msg__body">
+        <p class="msg__author" data-role="author"></p>
+        <div class="bubble" data-role="bubble">
+          <div class="bubble__content" data-role="content" hidden></div>
+          <div class="bubble__media" data-role="media" hidden></div>
+          <p class="bubble__text" data-role="text"></p>
+          <div class="bubble__foot">
+            <button class="bubble__more" type="button" data-role="more" hidden>Show more</button>
+            <time class="bubble__time" data-role="time"></time>
+            <span class="ticks" data-role="ticks" hidden></span>
+          </div>
+        </div>
+      </div>
+    </li>
+  </template>
+
+  <template id="attachment-template">
+    <figure class="att" data-role="att">
+      <div class="att__frame" data-role="frame"></div>
+      <figcaption class="att__foot">
+        <span class="att__name" data-role="att-name"></span>
+        <span class="att__size" data-role="att-size"></span>
+      </figcaption>
+    </figure>
+  </template>
+
+  <div id="attach-sheet" class="sheet" hidden role="dialog" aria-modal="false" aria-labelledby="sheet-title">
+    <div class="sheet__panel">
+      <p id="sheet-title" class="sheet__title">Add to message</p>
+      <div class="sheet__grid" id="sheet-grid"></div>
+      <button class="sheet__close" type="button" data-role="sheet-close">Cancel</button>
+    </div>
+  </div>
+
+  <div id="camera" class="camera" hidden role="dialog" aria-modal="true" aria-label="Camera">
+    <video class="camera__view" data-role="camera-view" autoplay playsinline muted></video>
+    <div class="camera__bar">
+      <button class="icon-btn icon-btn--big" type="button" data-role="camera-cancel" aria-label="Close camera">×</button>
+      <button class="shutter" type="button" data-role="camera-shutter" aria-label="Capture photo"></button>
+      <button class="icon-btn icon-btn--big" type="button" data-role="camera-flip" aria-label="Flip camera">⇄</button>
+    </div>
+  </div>
+
+  <div id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <section class="modal__panel">
+      <header class="modal__head">
+        <h2 id="modal-title" class="modal__title"></h2>
+        <button id="modal-close" class="icon-btn" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="modal__body" id="modal-body"></div>
+      <footer class="modal__foot" id="modal-foot"></footer>
+    </section>
+  </div>
+
+  <template id="poll-form">
+    <form class="form" novalidate>
+      <label class="field">
+        <span class="field__label">Question</span>
+        <input class="field__input" data-role="question" maxlength="200" required placeholder="Where should we eat?" />
+      </label>
+      <ol class="form__options" data-role="options"></ol>
+      <button class="btn btn--ghost btn--small" type="button" data-role="add-option">Add option</button>
+      <label class="check">
+        <input type="checkbox" data-role="multiple" />
+        <span>Allow more than one choice</span>
+      </label>
+      <p class="form__error" data-role="error" role="alert" hidden></p>
+    </form>
+  </template>
+
+  <template id="location-form">
+    <form class="form" novalidate>
+      <p class="form__note" data-role="coords">Waiting for a position…</p>
+      <button class="btn btn--ghost btn--small" type="button" data-role="locate">Use my current position</button>
+      <label class="field">
+        <span class="field__label">Label</span>
+        <input class="field__input" data-role="label" maxlength="120" placeholder="Studio gate 2 (optional)" />
+      </label>
+      <label class="field">
+        <span class="field__label">Address</span>
+        <input class="field__input" data-role="address" maxlength="300" placeholder="Street, city (optional)" />
+      </label>
+      <p class="form__error" data-role="error" role="alert" hidden></p>
+    </form>
+  </template>
+
+  <template id="contact-form">
+    <form class="form" novalidate>
+      <label class="field">
+        <span class="field__label">Name</span>
+        <input class="field__input" data-role="name" maxlength="100" required placeholder="Priya Rani" />
+      </label>
+      <label class="field">
+        <span class="field__label">Phone</span>
+        <input class="field__input" data-role="phone" maxlength="40" inputmode="tel" placeholder="+91 98765 43210" />
+      </label>
+      <label class="field">
+        <span class="field__label">Email</span>
+        <input class="field__input" data-role="email" maxlength="120" inputmode="email" placeholder="priya@example.com" />
+      </label>
+      <label class="field">
+        <span class="field__label">Organisation</span>
+        <input class="field__input" data-role="org" maxlength="80" placeholder="Optional" />
+      </label>
+      <label class="field">
+        <span class="field__label">Note</span>
+        <input class="field__input" data-role="note" maxlength="200" placeholder="Optional" />
+      </label>
+      <p class="form__error" data-role="error" role="alert" hidden></p>
+    </form>
+  </template>
+
+  <template id="event-form">
+    <form class="form" novalidate>
+      <label class="field">
+        <span class="field__label">Title</span>
+        <input class="field__input" data-role="title" maxlength="140" required placeholder="Design review" />
+      </label>
+      <div class="form__pair">
+        <label class="field">
+          <span class="field__label">Starts</span>
+          <input class="field__input" type="datetime-local" data-role="start" required />
+        </label>
+        <label class="field">
+          <span class="field__label">Ends</span>
+          <input class="field__input" type="datetime-local" data-role="end" />
+        </label>
+      </div>
+      <label class="check">
+        <input type="checkbox" data-role="all-day" />
+        <span>All day</span>
+      </label>
+      <label class="field">
+        <span class="field__label">Where</span>
+        <input class="field__input" data-role="location" maxlength="140" placeholder="Boardroom / link (optional)" />
+      </label>
+      <label class="field">
+        <span class="field__label">Note</span>
+        <textarea class="field__input" data-role="note" maxlength="500" rows="2" placeholder="Agenda (optional)"></textarea>
+      </label>
+      <p class="form__error" data-role="error" role="alert" hidden></p>
+    </form>
+  </template>
+
+  <template id="note-form">
+    <form class="form" novalidate>
+      <label class="field">
+        <span class="field__label">Personal note</span>
+        <textarea class="field__input" data-role="note-text" rows="4" maxlength="500"
+                  placeholder="Only you can see this"></textarea>
+      </label>
+      <p class="form__note" data-role="note-meta">Saved on the server, not on this device.</p>
+      <p class="form__error" data-role="error" role="alert" hidden></p>
+    </form>
+  </template>
+
+  <script src="/socket.io/socket.io.js" defer></script>
+  <script src="/js/app.js" defer></script>
+  <script src="/js/rich.js" defer></script>
+</body>
+</html>

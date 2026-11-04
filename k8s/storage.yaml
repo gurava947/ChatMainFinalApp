@@ -1,0 +1,20 @@
+# Attachments are written by one replica and read by any other, so the volume
+# needs ReadWriteMany. NFS, CephFS, EFS or GKE Filestore all qualify; a default
+# RWO block volume will schedule onto a single pod and break downloads.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: groupchat-uploads
+  namespace: groupchat
+  labels:
+    app.kubernetes.io/name: groupchat-app
+    app.kubernetes.io/component: attachment-storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  # Set to the storage class your cluster provisions RWX volumes with.
+  storageClassName: nfs-client
+  resources:
+    requests:
+      # MEDIA_TTL_S is 7 days; size this for a week of peak uploads.
+      storage: 20Gi

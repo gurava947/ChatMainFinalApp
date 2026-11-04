@@ -1,0 +1,78 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis-data:/data
+    networks: [chat]
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    # Two replicas prove the Redis adapter shares rooms across processes.
+    deploy:
+      replicas: 2
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      REDIS_URL: redis://redis:6379/0
+      USE_MEMORY_STORE: "false"
+      CORS_ORIGIN: http://localhost:8080,http://localhost:8443
+      TRUST_PROXY_HOPS: 1
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_API_MAX: 120
+      RATE_LIMIT_SEND_MAX: 20
+      UPLOAD_DIR: /app/uploads
+      MEDIA_MAX_BYTES: 52428800
+      MEDIA_MAX_PER_MESSAGE: 5
+      MEDIA_TTL_S: 604800
+      LOG_LEVEL: info
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      # Both replicas mount the same path; compose gives them one shared volume,
+      # so an attachment uploaded to one replica is readable from the other.
+      - chat-uploads:/app/uploads
+    # No host ports: only nginx may reach the app, and each replica needs its own.
+    expose:
+      - "3000"
+    networks: [chat]
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+      - "8443:443"
+    restart: unless-stopped
+    depends_on:
+      - app
+    networks: [chat]
+
+volumes:
+  redis-data:
+  chat-uploads:
+
+networks:
+  chat:
+    driver: bridge
