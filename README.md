@@ -306,13 +306,14 @@ What the repo does to fit that model:
   `store_unavailable` so the offline outbox backs off instead of giving up on the message.
 
 To have Vercel build from the repository instead of `vercel deploy --prod` from a working copy, connect it
-once in the dashboard - *Project → Settings → Git → Connect to GitHub* → `gurava947/InChatApp`, production
-branch `main` (the `vercel git connect` CLI does the same thing). Everything the platform needs
+once in the dashboard - *Project → Settings → Git → Connect to GitHub* → `gurava947/ChatMainFinalApp`, production
+branch `main` (the `vercel git connect` CLI does the same thing). Set *Project → Settings → Build and
+Development Settings → Root Directory* to `.` (the repository root), not `inchat/`. The Vercel install
+and build commands expect the root `package.json` and sibling `client/` directory; a build started
+inside `inchat/` cannot find `client/` and targets the separate Next.js application. Everything the platform needs
 (`api/index.js`, `vercel.json`, the environment variables) is in the repo, so a git-driven deploy behaves
 exactly like the CLI one. Two settings are project-level and are not in the repo, so a new project needs
-them too: the Root Directory has to stay at the repository root - `inchat/` beside it is a separate
-Next.js + Supabase app that Vercel's framework detection will happily pick up and try to build, which
-fails - and the Upstash integration, because `REDIS_URL` is what makes more than one instance share a room.
+the Upstash integration too, because `REDIS_URL` is what makes more than one instance share a room.
 
 Same ephemeral-disk caveat as Render - attachments live in `/tmp` and vanish with the instance, so point
 `MEDIA_*` at object storage before relying on them. For an always-on socket server with no such
