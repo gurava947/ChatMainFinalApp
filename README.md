@@ -288,8 +288,9 @@ What the repo does to fit that model:
   `public/` from its own filesystem layer *before* rewrites, so `/` would answer with the old
   no-framework page and the React app would be unreachable even though the function is healthy.
 - `installCommand` and `buildCommand` in `vercel.json` are what put `client/dist` on the function: the
-  root install is production dependencies only, the client has its own lockfile, and `dist/` is not in
-  git. Without them a git-driven build produces a function with no UI to serve.
+  root install is production dependencies only, then Vercel changes into `client/` to install its
+  committed lockfile before building. `dist/` is not in git. Without them a git-driven build produces
+  a function with no UI to serve.
 - WebSockets are the first transport; a socket lives at most `maxDuration`, then the client reconnects
   and repaints the transcript from Redis. Presence and rooms are rebuilt on that reconnect.
 - `REDIS_URL` is what makes two tabs the same conversation. Without it the app logs a warning and falls
