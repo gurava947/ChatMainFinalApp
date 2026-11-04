@@ -47,7 +47,7 @@ function registerAuthMiddleware(io, { chat, store, logger, env, ensureStore }) {
           })
         ]);
       }
-      const session = await chat.getSession(auth.userId);
+      const session = await chat.authenticateSession(auth.userId, auth.sessionToken);
       if (!session) throw new Error('unknown session');
       socket.data.user = { userId: session.userId, displayName: session.displayName, since: Date.now() };
       socket.data.room = null;

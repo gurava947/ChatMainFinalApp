@@ -3,6 +3,7 @@
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
 const { waitFor, openSocket } = require('../helpers/socket-harness');
+const { createSession, sessionHeaders } = require('../helpers/session-auth');
 const { STATUS_TTL_SECONDS, STATUS_MAX_PER_USER, STATUS_COLORS } = require('../../src/constants');
 
 jest.setTimeout(30000);
@@ -19,12 +20,10 @@ const NOT_AN_IMAGE = Buffer.from('%PDF-1.4 this is a document, not a picture\n')
 const STATUS_KEYS = ['id', 'kind', 'text', 'color', 'media', 'createdAt', 'expiresAt', 'remainingMs', 'author', 'mine', 'viewedByMe', 'viewerCount'];
 
 async function sessionId(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  expect(res.status).toBe(201);
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
-const as = (userId) => ({ 'X-Session-Id': userId });
+const as = sessionHeaders;
 
 async function upload(userId, file, name) {
   const res = await request(ctx.app).post('/api/media').set(as(userId)).attach('files', file, name);

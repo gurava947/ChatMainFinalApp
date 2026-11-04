@@ -12,7 +12,7 @@ import {
   deleteMessagesForMe, deleteStatus, fetchCallHistory, fetchChatSettings, fetchMyProfile, fetchProfiles,
   fetchRoomMessages, fetchStatuses, fetchStatusViewers, forgetRoom, markStatusSeen, normalizeRoomName, postMediaStatus,
   postTextStatus, readGuest, readRooms, removeAvatar, resolveGuest, roomSummary, saveGuest, saveNote, saveRoomTheme,
-  saveRooms, unblockGuest, uploadAvatar, uploadStatusMedia,
+  saveRooms, sessionHeaders, unblockGuest, uploadAvatar, uploadStatusMedia,
 } from './roomChat'
 import {
   buildContactContent, buildEventContent, buildPollContent, contactLinks, icsForEvent, pollOutcome,
@@ -1333,7 +1333,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const uploadFiles = async (files) => {
     const form = new FormData()
     files.forEach((file) => form.append('files', file))
-    const response = await fetch('/api/media', { method: 'POST', headers: { 'X-Session-Id': session.userId }, body: form })
+    const response = await fetch('/api/media', { method: 'POST', headers: sessionHeaders(session), body: form })
     const result = await response.json().catch(() => ({}))
     if (!response.ok || !Array.isArray(result.media)) {
       const reason = result.error === 'file_too_large' ? 'A selected file is larger than the upload limit.' : (result.error || 'File upload failed.')
@@ -2425,10 +2425,15 @@ function App() {
 
   useEffect(() => {
     if (!guest?.userId) return undefined
+    if (!guest.sessionToken) {
+      clearGuest()
+      setGuest(null)
+      return undefined
+    }
     let active = true
-    fetch(`/api/sessions/${encodeURIComponent(guest.userId)}`)
+    fetch(`/api/sessions/${encodeURIComponent(guest.userId)}`, { headers: sessionHeaders(guest) })
       .then(async (response) => {
-        if (response.ok) return response.json()
+        if (response.ok) return { ...(await response.json()), sessionToken: guest.sessionToken }
         if (response.status === 401 || response.status === 404) return null
         return undefined
       })
@@ -2442,7 +2447,7 @@ function App() {
       })
       .catch(() => {})
     return () => { active = false }
-  }, [guest?.userId])
+  }, [guest?.userId, guest?.sessionToken])
 
   /**
    * The profile - name, about note, picture - belongs to the session, so it is

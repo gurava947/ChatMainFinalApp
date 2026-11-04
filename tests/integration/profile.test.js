@@ -2,6 +2,7 @@
 
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
+const { createSession, sessionHeaders } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
@@ -15,12 +16,10 @@ const NOT_AN_IMAGE = Buffer.from('%PDF-1.4 this is a document, not a picture\n')
 let ctx;
 
 async function sessionId(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  expect(res.status).toBe(201);
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
-const as = (userId) => ({ 'X-Session-Id': userId });
+const as = sessionHeaders;
 
 const profile = async (userId) => {
   const res = await request(ctx.app).get('/api/me/profile').set(as(userId));

@@ -154,25 +154,30 @@ per file and `MEDIA_MAX_PER_MESSAGE` per message, and the declared MIME never ov
 | --- | --- | --- |
 | `GET /healthz` | liveness, no external dependency | public |
 | `GET /readyz` | readiness, checks the store | public |
-| `POST /api/sessions` | mints a session id used as the socket credential | rate limited |
-| `GET /api/sessions/:userId` | lets a returning client reuse its identity | rate limited |
-| `GET /api/rooms/:room/messages` | cached history | `X-Session-Id` |
-| `POST /api/rooms/:room/messages` | write path mirroring the socket | `X-Session-Id` |
-| `GET /api/rooms/:room/media` | attachment list behind Recents / Media / Folders | `X-Session-Id`, own self room only |
-| `GET /api/rooms/:room/presence` | live roster | `X-Session-Id` |
-| `GET /api/me/self` | the caller's private "Note to self" room id | `X-Session-Id` |
-| `GET /api/me/note` | the personal note (`{text, updatedAt}`) | `X-Session-Id` |
-| `PUT /api/me/note` | replaces the personal note | `X-Session-Id` |
+| `POST /api/sessions` | mints a public user id and session bearer token | rate limited |
+| `GET /api/sessions/:userId` | lets the authenticated client validate and reuse its identity | `X-Session-Id`, `X-Session-Token` |
+| `GET /api/rooms/:room/messages` | cached history | `X-Session-Id`, `X-Session-Token` |
+| `POST /api/rooms/:room/messages` | write path mirroring the socket | `X-Session-Id`, `X-Session-Token` |
+| `GET /api/rooms/:room/media` | attachment list behind Recents / Media / Folders | session headers, own self room only |
+| `GET /api/rooms/:room/presence` | live roster | session headers |
+| `GET /api/me/self` | the caller's private "Note to self" room id | session headers |
+| `GET /api/me/note` | the personal note (`{text, updatedAt}`) | session headers |
+| `PUT /api/me/note` | replaces the personal note | session headers |
 | `GET /api/events` | socket event catalogue + active store, for ops | public |
-| `POST /api/media` | multipart upload, returns attachment ids + URLs | `X-Session-Id` |
+| `POST /api/media` | multipart upload, returns attachment ids + URLs | session headers |
 | `GET /media/:id` | attachment download, supports `Range` | unguessable id |
 
 **Socket events.** Client→server: `message`, `typing`, `stop_typing`, `room:join`, `message:seen`,
 `poll:vote`, `call:invite`, `call:accept`, `call:reject`, `call:offer`, `call:answer`, `call:ice` and
-`call:end`. Server→client: `new_message`, `history`, `presence`, `user_joined`, `user_left`, `typing`,
+`call:end`. The handshake carries the public user id and the separate bearer token; the id alone is not
+an authentication credential. Tokens are random, expire with their session, and only their SHA-256
+digests are stored server-side. The client must retain its token to restore its guest session.
+Sessions created before this change have no token and must be recreated on the next visit; their
+user-specific data remains attached to the old public id and is not transferred automatically.
+Server→client: `new_message`, `history`, `presence`, `user_joined`, `user_left`, `typing`,
 `stop_typing`, `message_seen`, `poll_voted`, `call:incoming`, `call:accepted`, `call:declined`,
 `call:offer`, `call:answer`, `call:ice`, `call:end` and `system`. Handshake `auth` carries
-`{ userId, room }`.
+`{ userId, sessionToken, room }`.
 
 Every `/api/rooms/:room/*` route runs `assertRoomAccess`, which is what keeps another user's
 `self-<uuid>` room unreadable and unwritable; the socket path adds its own `room mismatch` guard,
@@ -491,8 +496,8 @@ no videos the page says so; nothing is invented.
 
 - Redis: enable auth + TLS (`rediss://`) and put it behind a managed HA offering; the sample runs
   single-node with no password.
-- Identity: the session id is an unguessable UUID but carries no login. Add real authentication
-  (OIDC/JWT) and per-room membership checks if rooms are private.
+- Identity: guest sessions are protected by a random bearer token separate from the public UUID, but
+  they do not represent a verified login. Add real authentication (OIDC/JWT) if accounts are required.
 - Durability: history is cache-only. Add a database write path if messages must survive eviction.
 - Attachments: files live on the local disk (or the RWX volume) with a TTL. Object storage (S3/GCS
   with signed URLs) is the right move once volume size or egress matters, and virus scanning belongs in

@@ -4,15 +4,14 @@ const request = require('supertest');
 const { io: connect } = require('socket.io-client');
 const { createTestServer } = require('../helpers/create-test-server');
 const { waitFor, emitWithAck, openSocket } = require('../helpers/socket-harness');
+const { createSession, rememberSession, sessionHeaders } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
 let ctx;
 
 async function sessionId(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  if (res.status !== 201) throw new Error(`session creation failed: ${JSON.stringify(res.body)}`);
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
 beforeAll(async () => {
@@ -26,6 +25,18 @@ afterAll(async () => {
 describe('socket handshake', () => {
   test('rejects an unknown session id', async () => {
     const socket = openSocket(ctx.url, '00000000-0000-4000-8000-000000000000', 'general');
+    const error = await new Promise((resolve) => socket.once('connect_error', resolve));
+    expect(error.message).toBe('unauthorized');
+    socket.close();
+  });
+
+  test('rejects a known public user id without its session token', async () => {
+    const userId = await sessionId('Sana');
+    const socket = connect(ctx.url, {
+      auth: { userId, room: 'launch' },
+      transports: ['websocket'],
+      forceNew: true
+    });
     const error = await new Promise((resolve) => socket.once('connect_error', resolve));
     expect(error.message).toBe('unauthorized');
     socket.close();
@@ -104,7 +115,7 @@ describe('two-user room', () => {
 
     const history = await request(ctx.app)
       .get('/api/rooms/standup/messages')
-      .set('X-Session-Id', bId);
+      .set(sessionHeaders(bId));
     const hydrated = history.body.messages.find((m) => m.id === sent.id);
     expect(hydrated.seenBy).toEqual([aId]);
   });
@@ -248,6 +259,7 @@ describe('per-socket send throttle', () => {
 
   test('the third message in the window is rejected', async () => {
     const res = await request(limited.app).post('/api/sessions').send({ displayName: 'Spam' });
+    rememberSession(res.body);
     const socket = openSocket(limited.url, res.body.userId, 'flood');
     await waitFor(socket, 'presence');
 
@@ -279,6 +291,7 @@ describe('a send that meets a store outage', () => {
   test('acks store_unavailable rather than the driver text', async () => {
     // Sessions live in the store of the server that will answer the handshake.
     const res = await request(broken.app).post('/api/sessions').send({ displayName: 'Wrecker' });
+    rememberSession(res.body);
     const socket = openSocket(broken.url, res.body.userId, 'outage');
     await waitFor(socket, 'presence', (p) => p.connections === 1);
 
@@ -298,6 +311,7 @@ describe('a send that meets a store outage', () => {
 
   test('acks a rejected payload unchanged', async () => {
     const res = await request(broken.app).post('/api/sessions').send({ displayName: 'Honest' });
+    rememberSession(res.body);
     const socket = openSocket(broken.url, res.body.userId, 'valid');
     await waitFor(socket, 'presence', (p) => p.connections === 1);
 
@@ -329,8 +343,14 @@ describe('events that arrive during the handshake join', () => {
   // landed, and no listener existed for it yet.
   test('a message sent before the join finishes still gets its ack', async () => {
     const res = await request(slow.app).post('/api/sessions').send({ displayName: 'Rusher' });
+    rememberSession(res.body);
     const socket = connect(slow.url, {
-      auth: { userId: res.body.userId, room: 'rushed', roomPassword: 'InChatTestPassword!' },
+      auth: {
+        userId: res.body.userId,
+        sessionToken: res.body.sessionToken,
+        room: 'rushed',
+        roomPassword: 'InChatTestPassword!'
+      },
       transports: ['websocket'],
       forceNew: true
     });

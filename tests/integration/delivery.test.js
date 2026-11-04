@@ -4,15 +4,14 @@ const request = require('supertest');
 const { io: connect } = require('socket.io-client');
 const { createTestServer } = require('../helpers/create-test-server');
 const { waitFor, emitWithAck, openSocket, record } = require('../helpers/socket-harness');
+const { createSession, getSessionToken } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
 let ctx;
 
 async function sessionId(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  if (res.status !== 201) throw new Error(`session creation failed: ${JSON.stringify(res.body)}`);
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
 /** Sends one message from `senderSocket` and resolves with its stored id. */
@@ -110,7 +109,7 @@ describe('delivery receipts', () => {
     // The HTTP history route is a real handoff: reading it delivers the room.
     const res = await request(ctx.app)
       .get('/api/rooms/offline-send/messages')
-      .set('x-session-id', latecomerId);
+      .set({ 'x-session-id': latecomerId, 'x-session-token': getSessionToken(latecomerId) });
     expect(res.status).toBe(200);
 
     const message = res.body.messages.find((item) => item.id === messageId);
@@ -129,7 +128,7 @@ describe('delivery receipts', () => {
 
     const res = await request(ctx.app)
       .get(`/api/rooms/self-${userId}/messages`)
-      .set('x-session-id', userId);
+      .set({ 'x-session-id': userId, 'x-session-token': getSessionToken(userId) });
 
     expect(res.status).toBe(200);
     expect(res.body.messages.find((item) => item.id === messageId).deliveredTo).toEqual([]);
@@ -196,7 +195,11 @@ describe('delivery receipts', () => {
   test('a socket that never joined a room cannot report delivery', async () => {
     const userId = await sessionId('Lea');
     // No room in the handshake, so the guard has nothing to attribute the receipt to.
-    const loose = record(connect(ctx.url, { auth: { userId }, transports: ['websocket'], forceNew: true }));
+    const loose = record(connect(ctx.url, {
+      auth: { userId, sessionToken: getSessionToken(userId) },
+      transports: ['websocket'],
+      forceNew: true
+    }));
     await waitFor(loose, 'system', (p) => p.type === 'connected');
 
     const ack = await emitWithAck(loose, 'message:delivered', { ids: [crypto.randomUUID()] });

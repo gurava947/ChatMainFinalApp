@@ -8,7 +8,12 @@ function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
 }
 
-const session = { userId: 'b0000000-0000-4000-8000-000000000002', displayName: 'Meera', expiresAt: 1800000000000 };
+const session = {
+  userId: 'b0000000-0000-4000-8000-000000000002',
+  sessionToken: 'A'.repeat(43),
+  displayName: 'Meera',
+  expiresAt: 1800000000000
+};
 const other = { userId: 'c0000000-0000-4000-8000-000000000003', displayName: 'Rahul' };
 
 let roomChat;
@@ -35,6 +40,7 @@ describe('fetching this viewer settings', () => {
     expect(settings).toEqual({ blocked: [other], clearedAt: 1700, theme: 'forest', hidden: ['x1'] });
     expect(calls.map((call) => call.url)).toEqual(['/api/rooms/weekend-plans/settings', '/api/me/blocks']);
     expect(calls.every((call) => call.options.headers['X-Session-Id'] === session.userId)).toBe(true);
+    expect(calls.every((call) => call.options.headers['X-Session-Token'] === session.sessionToken)).toBe(true);
   });
 
   test('a first-time room reads as an empty view instead of an error', async () => {

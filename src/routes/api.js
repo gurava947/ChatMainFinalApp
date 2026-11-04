@@ -23,12 +23,14 @@ const { createCallService } = require('../services/call-service');
 const { createStatusService } = require('../services/status-service');
 
 const sessionHeaderSchema = z.string().uuid();
+const sessionTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 function requireSession({ chat }) {
   return async function middleware(req, res, next) {
     try {
       const sessionId = sessionHeaderSchema.parse(req.get('x-session-id'));
-      const session = await chat.getSession(sessionId);
+      const sessionToken = sessionTokenSchema.parse(req.get('x-session-token'));
+      const session = await chat.authenticateSession(sessionId, sessionToken);
       if (!session) {
         return res.status(401).json({ error: 'invalid_session' });
       }
@@ -54,7 +56,8 @@ function apiRouter({ chat, store, limiters, media, logger, io }) {
       res.status(201).json({
         userId: session.userId,
         displayName: session.displayName,
-        expiresAt: session.expiresAt
+        expiresAt: session.expiresAt,
+        sessionToken: session.sessionToken
       });
     } catch (err) {
       next(err);
@@ -87,12 +90,15 @@ function apiRouter({ chat, store, limiters, media, logger, io }) {
   if (media) router.use('/media', guard, mediaUploadRouter({ media, limiters }));
 
   /** Lets a returning client reuse its cached session instead of minting a new identity. */
-  router.get('/sessions/:userId', async (req, res, next) => {
+  router.get('/sessions/:userId', guard, async (req, res, next) => {
     try {
       const userId = sessionHeaderSchema.parse(req.params.userId);
-      const session = await chat.getSession(userId);
-      if (!session) return res.status(404).json({ error: 'unknown_session' });
-      return res.json({ userId: session.userId, displayName: session.displayName, expiresAt: session.expiresAt });
+      if (userId !== req.session.userId) return res.status(404).json({ error: 'unknown_session' });
+      return res.json({
+        userId: req.session.userId,
+        displayName: req.session.displayName,
+        expiresAt: req.session.expiresAt
+      });
     } catch (err) {
       return next(err);
     }

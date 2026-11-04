@@ -12,7 +12,12 @@ function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
 }
 
-const session = { userId: 'a0000000-0000-4000-8000-000000000001', displayName: 'Arjun', expiresAt: 1800000000000 };
+const session = {
+  userId: 'a0000000-0000-4000-8000-000000000001',
+  sessionToken: 'B'.repeat(43),
+  displayName: 'Arjun',
+  expiresAt: 1800000000000
+};
 
 let roomChat;
 let fetchCalls;
@@ -33,6 +38,22 @@ describe('guest session storage', () => {
     expect(JSON.parse(localStorage.getItem('inchat:guest'))).toEqual(session);
     expect(localStorage.getItem('chat:userId')).toBe(session.userId);
     expect(localStorage.getItem('chat:displayName')).toBe(session.displayName);
+  });
+
+  test('validates a cached session with its secret and keeps it for reconnects', async () => {
+    roomChat.saveGuest(session);
+    window.__fetchResponse = () => Promise.resolve(jsonResponse({
+      userId: session.userId,
+      displayName: session.displayName,
+      expiresAt: session.expiresAt
+    }));
+
+    const restored = await roomChat.resolveGuest(session.displayName);
+
+    expect(fetchCalls[0].url).toBe(`/api/sessions/${session.userId}`);
+    expect(fetchCalls[0].options.headers['X-Session-Token']).toBe(session.sessionToken);
+    expect(restored.sessionToken).toBe(session.sessionToken);
+    expect(roomChat.readGuest().sessionToken).toBe(session.sessionToken);
   });
 
   test('clearGuest removes every trace of the session so sign out is real', () => {
@@ -117,7 +138,7 @@ describe('profile read + picture', () => {
     expect(sent.name).toBe('me.png');
     expect(sent.type).toBe('image/png');
     // Letting the browser set the multipart boundary is what keeps multer happy.
-    expect(Object.keys(options.headers)).toEqual(['X-Session-Id']);
+    expect(Object.keys(options.headers)).toEqual(['X-Session-Id', 'X-Session-Token']);
     expect(avatar.url).toBe('/media/m1');
   });
 

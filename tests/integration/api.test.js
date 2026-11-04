@@ -2,6 +2,7 @@
 
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
+const { createSession, sessionHeaders } = require('../helpers/session-auth');
 
 let ctx;
 
@@ -14,9 +15,7 @@ afterAll(async () => {
 });
 
 async function newSession(displayName = 'Arjun') {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  expect(res.status).toBe(201);
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
 describe('health probes', () => {
@@ -37,11 +36,42 @@ describe('session endpoint', () => {
   test('issues a uuid session id', async () => {
     const userId = await newSession();
     expect(userId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(sessionHeaders(userId)['X-Session-Token']).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const stored = await ctx.chat.getSession(userId);
+    expect(stored.sessionTokenHash).toMatch(/^[a-f\d]{64}$/);
+    expect(stored.sessionToken).toBeUndefined();
+    const authenticated = await request(ctx.app)
+      .get(`/api/sessions/${userId}`)
+      .set(sessionHeaders(userId));
+    expect(authenticated.status).toBe(200);
+    expect(authenticated.body.sessionToken).toBeUndefined();
+  });
+
+  test('does not accept a public user id as an authentication credential', async () => {
+    const userId = await newSession();
+    const res = await request(ctx.app)
+      .get('/api/me/self')
+      .set('X-Session-Id', userId);
+    expect(res.status).toBe(401);
   });
 
   test('rejects a display name that is too short', async () => {
     const res = await request(ctx.app).post('/api/sessions').send({ displayName: 'x' });
     expect(res.status).toBe(400);
+  });
+
+  test('does not disclose a session when only its public id is provided', async () => {
+    const userId = await newSession();
+    const res = await request(ctx.app).get(`/api/sessions/${userId}`);
+    expect(res.status).toBe(401);
+  });
+
+  test('rejects a token that does not match the public session id', async () => {
+    const userId = await newSession();
+    const res = await request(ctx.app)
+      .get('/api/me/self')
+      .set({ 'X-Session-Id': userId, 'X-Session-Token': 'B'.repeat(43) });
+    expect(res.status).toBe(401);
   });
 
   test('rejects a markup display name', async () => {
@@ -60,7 +90,7 @@ describe('room endpoints', () => {
     const userId = await newSession();
     const res = await request(ctx.app)
       .get('/api/rooms/not%20a%20slug/messages')
-      .set('X-Session-Id', userId);
+      .set(sessionHeaders(userId));
     expect(res.status).toBe(400);
   });
 
@@ -69,14 +99,14 @@ describe('room endpoints', () => {
     await ctx.authorizeRoomForTest(userId, 'engineering');
     const write = await request(ctx.app)
       .post('/api/rooms/engineering/messages')
-      .set('X-Session-Id', userId)
+      .set(sessionHeaders(userId))
       .send({ text: '  deployed   to  staging  ' });
     expect(write.status).toBe(201);
     expect(write.body.text).toBe('deployed to staging');
 
     const read = await request(ctx.app)
       .get('/api/rooms/engineering/messages')
-      .set('X-Session-Id', userId);
+      .set(sessionHeaders(userId));
     expect(read.status).toBe(200);
     expect(read.body.messages).toHaveLength(1);
     expect(read.body.messages[0].id).toBe(write.body.id);
@@ -103,6 +133,16 @@ describe('security headers and CORS', () => {
       .get('/healthz')
       .set('Origin', 'http://127.0.0.1');
     expect(res.headers['access-control-allow-origin']).toBe('http://127.0.0.1');
+  });
+
+  test('allows the session token header on a configured CORS preflight', async () => {
+    const res = await request(ctx.app)
+      .options('/api/me/self')
+      .set('Origin', 'http://127.0.0.1')
+      .set('Access-Control-Request-Method', 'GET')
+      .set('Access-Control-Request-Headers', 'x-session-id,x-session-token');
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-headers']).toContain('X-Session-Token');
   });
 
   test('rejects oversized JSON bodies before they reach the handler', async () => {

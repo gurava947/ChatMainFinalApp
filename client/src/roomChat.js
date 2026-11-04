@@ -35,6 +35,13 @@ export function saveGuest(session) {
   localStorage.setItem(LEGACY_NAME_KEY, session.displayName)
 }
 
+export function sessionHeaders(session) {
+  return {
+    'X-Session-Id': session.userId,
+    'X-Session-Token': session.sessionToken
+  }
+}
+
 export function saveRooms(rooms) {
   localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms))
 }
@@ -57,7 +64,7 @@ export function forgetRoom(roomId) {
 export async function saveNote(session, text) {
   const response = await fetch('/api/me/note', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'X-Session-Id': session.userId },
+    headers: { 'Content-Type': 'application/json', ...sessionHeaders(session) },
     body: JSON.stringify({ text })
   })
   if (response.status === 401) throw new Error('Your session expired. Join a room again to refresh it.')
@@ -102,11 +109,13 @@ export async function resolveGuest(displayName) {
   const name = displayName.trim()
   if (name.length < 2 || name.length > 32) throw new Error('Display name must be 2–32 characters.')
   const cached = readGuest()
-  if (cached?.displayName === name) {
+  if (cached?.displayName === name && cached.sessionToken) {
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(cached.userId)}`)
+      const response = await fetch(`/api/sessions/${encodeURIComponent(cached.userId)}`, {
+        headers: sessionHeaders(cached)
+      })
       if (response.ok) {
-        const session = await response.json()
+        const session = { ...(await response.json()), sessionToken: cached.sessionToken }
         saveGuest(session)
         return session
       }
@@ -131,7 +140,7 @@ export async function resolveGuest(displayName) {
 
 export function connectRoom(session, room) {
   return io({
-    auth: { userId: session.userId, room },
+    auth: { userId: session.userId, sessionToken: session.sessionToken, room },
     transports: ['websocket', 'polling'],
     reconnectionDelay: 500,
     reconnectionDelayMax: 5000
@@ -165,7 +174,7 @@ export const CHAT_THEMES = [
 async function settingsRequest(path, session, init = {}) {
   const response = await fetch(path, {
     ...init,
-    headers: { 'X-Session-Id': session.userId, ...(init.body ? { 'Content-Type': 'application/json' } : {}) }
+    headers: { ...sessionHeaders(session), ...(init.body ? { 'Content-Type': 'application/json' } : {}) }
   })
   if (response.status === 401) throw new Error('Your session expired. Join a room again to refresh it.')
   const result = await response.json().catch(() => ({}))
@@ -270,7 +279,7 @@ export async function fetchRoomMessages(session, room) {
 async function profileRequest(path, session, init = {}) {
   const response = await fetch(path, {
     ...init,
-    headers: { 'X-Session-Id': session.userId, ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }) }
+    headers: { ...sessionHeaders(session), ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }) }
   })
   if (response.status === 401) throw new Error('Your session expired. Join a room again to refresh it.')
   const result = await response.json().catch(() => ({}))
@@ -315,7 +324,7 @@ export async function fetchProfiles(session, userIds) {
 async function feedRequest(path, session, init = {}) {
   const response = await fetch(path, {
     ...init,
-    headers: { 'X-Session-Id': session.userId, ...(init.body ? { 'Content-Type': 'application/json' } : {}) }
+    headers: { ...sessionHeaders(session), ...(init.body ? { 'Content-Type': 'application/json' } : {}) }
   })
   if (response.status === 401) throw new Error('Your session expired. Join a room again to refresh it.')
   const result = await response.json().catch(() => ({}))
@@ -372,7 +381,7 @@ export async function fetchStatusViewers(session, id) {
 export async function uploadStatusMedia(session, file) {
   const form = new FormData()
   form.append('files', file, file.name || 'status')
-  const response = await fetch('/api/media', { method: 'POST', headers: { 'X-Session-Id': session.userId }, body: form })
+  const response = await fetch('/api/media', { method: 'POST', headers: sessionHeaders(session), body: form })
   const result = await response.json().catch(() => ({}))
   if (!response.ok || !Array.isArray(result.media) || !result.media.length) {
     throw new Error(result.error === 'file_too_large' ? 'That file is larger than the upload limit.' : 'Could not upload that file.')

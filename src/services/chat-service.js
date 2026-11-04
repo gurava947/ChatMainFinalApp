@@ -36,18 +36,34 @@ class ChatService {
 
   async createSession(displayName) {
     const now = Date.now();
+    const sessionToken = crypto.randomBytes(32).toString('base64url');
     const session = {
       userId: crypto.randomUUID(),
       displayName,
       createdAt: now,
-      expiresAt: now + this.config.sessionTtlSeconds * 1000
+      expiresAt: now + this.config.sessionTtlSeconds * 1000,
+      sessionTokenHash: crypto.createHash('sha256').update(sessionToken).digest('hex')
     };
     await this.store.saveSession(session);
-    return session;
+    return {
+      userId: session.userId,
+      displayName: session.displayName,
+      expiresAt: session.expiresAt,
+      sessionToken
+    };
   }
 
   getSession(userId) {
     return this.store.getSession(userId);
+  }
+
+  async authenticateSession(userId, sessionToken) {
+    const session = await this.getSession(userId);
+    if (!session || session.expiresAt <= Date.now() || !/^[a-f\d]{64}$/i.test(session.sessionTokenHash || '')) return null;
+
+    const expected = Buffer.from(session.sessionTokenHash, 'hex');
+    const actual = crypto.createHash('sha256').update(sessionToken).digest();
+    return crypto.timingSafeEqual(expected, actual) ? session : null;
   }
 
   async hasRoomAccess(user, room) {

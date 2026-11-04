@@ -3,6 +3,7 @@
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
 const { waitFor, emitWithAck, openSocket } = require('../helpers/socket-harness');
+const { createSession, sessionHeaders } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
@@ -16,12 +17,10 @@ const received = (socket) => socket.__events
 let ctx;
 
 async function sessionId(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  if (res.status !== 201) throw new Error(`session creation failed: ${JSON.stringify(res.body)}`);
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
-const as = (userId) => ({ 'X-Session-Id': userId });
+const as = sessionHeaders;
 
 async function post(room, userId, text) {
   await ctx.authorizeRoomForTest(userId, room);

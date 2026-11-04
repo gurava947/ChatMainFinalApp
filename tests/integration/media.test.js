@@ -2,6 +2,7 @@
 
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
+const { createSession, sessionHeaders } = require('../helpers/session-auth');
 
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
@@ -9,14 +10,13 @@ const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1
 let ctx;
 
 async function session(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
 async function upload(userId, field) {
   return request(ctx.app)
     .post('/api/media')
-    .set('X-Session-Id', userId)
+    .set(sessionHeaders(userId))
     .attach('files', field.buffer, { filename: field.name, contentType: field.type })
     .field('caption', 'from test');
 }
@@ -61,7 +61,7 @@ describe('media upload', () => {
 
     const sent = await request(ctx.app)
       .post('/api/rooms/voice-room/messages')
-      .set('X-Session-Id', userId)
+      .set(sessionHeaders(userId))
       .send({
         attachments: [{ id: audio.id, kind: audio.kind, name: audio.name, mime: audio.mime, size: audio.size }],
         content: { type: 'voice', durationMs: 1200, peaks: [] }
@@ -86,7 +86,7 @@ describe('media upload', () => {
     const userId = await session('Empty');
     const res = await request(ctx.app)
       .post('/api/media')
-      .set('X-Session-Id', userId)
+      .set(sessionHeaders(userId))
       .field('caption', 'nothing here');
     expect(res.status).toBe(400);
   });
@@ -162,7 +162,7 @@ describe('attachments on messages', () => {
 
     const res = await request(ctx.app)
       .post('/api/rooms/launchpad/messages')
-      .set('X-Session-Id', userId)
+      .set(sessionHeaders(userId))
       .send({ text: 'screenshot', attachments: [{ id: attached.id, kind: 'image', name: 'shot.png', mime: 'image/png', size: attached.size }] });
 
     expect(res.status).toBe(201);
@@ -172,7 +172,7 @@ describe('attachments on messages', () => {
 
     const history = await request(ctx.app)
       .get('/api/rooms/launchpad/messages')
-      .set('X-Session-Id', userId);
+      .set(sessionHeaders(userId));
     expect(history.body.messages.at(-1).attachments[0].id).toBe(attached.id);
   });
 
@@ -185,7 +185,7 @@ describe('attachments on messages', () => {
 
     const res = await request(ctx.app)
       .post('/api/rooms/private/messages')
-      .set('X-Session-Id', thief)
+      .set(sessionHeaders(thief))
       .send({ text: 'steal', attachments: [{
         id: uploaded.body.media[0].id,
         kind: 'image',
@@ -206,7 +206,7 @@ describe('attachments on messages', () => {
 
     const res = await request(ctx.app)
       .post('/api/rooms/launchpad/messages')
-      .set('X-Session-Id', userId)
+      .set(sessionHeaders(userId))
       .send({
         attachments: [{
           id: attached.id, kind: attached.kind, name: attached.name, mime: attached.mime, size: attached.size
@@ -223,7 +223,7 @@ describe('attachments on messages', () => {
     await ctx.authorizeRoomForTest(userId, 'launchpad');
     const res = await request(ctx.app)
       .post('/api/rooms/launchpad/messages')
-      .set('X-Session-Id', userId)
+      .set(sessionHeaders(userId))
       .send({ text: '   ' });
     expect(res.status).toBe(400);
   });

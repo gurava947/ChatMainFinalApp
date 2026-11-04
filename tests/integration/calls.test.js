@@ -3,18 +3,17 @@
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
 const { waitFor, emitWithAck, openSocket } = require('../helpers/socket-harness');
+const { createSession, sessionHeaders } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
 let ctx;
 
 async function sessionId(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  expect(res.status).toBe(201);
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
-const as = (userId) => ({ 'X-Session-Id': userId });
+const as = sessionHeaders;
 
 async function callsOf(userId) {
   const res = await request(ctx.app).get('/api/calls').set(as(userId));

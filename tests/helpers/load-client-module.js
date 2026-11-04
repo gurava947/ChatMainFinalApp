@@ -12,7 +12,7 @@ const CLIENT_DIR = path.join(__dirname, '..', '..', 'client', 'src');
 const ROOM_CHAT_EXPORTS = [
   'readGuest', 'readRooms', 'saveGuest', 'saveRooms', 'clearGuest', 'forgetRoom',
   'saveNote', 'normalizeRoomName', 'roomSummary', 'resolveGuest',
-  'connectRoom', 'connectFeed', 'CHAT_THEMES', 'fetchChatSettings', 'blockGuest', 'unblockGuest',
+  'connectRoom', 'connectFeed', 'sessionHeaders', 'CHAT_THEMES', 'fetchChatSettings', 'blockGuest', 'unblockGuest',
   'saveRoomTheme', 'clearChatForMe', 'deleteMessagesForMe', 'deleteChatForMe', 'fetchRoomMessages',
   'fetchMyProfile', 'uploadAvatar', 'removeAvatar', 'fetchProfiles',
   'fetchCallHistory', 'clearCallHistory', 'fetchStatuses', 'postTextStatus', 'postMediaStatus',

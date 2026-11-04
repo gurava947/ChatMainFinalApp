@@ -29,7 +29,7 @@ function buildCorsOptions({ origins }) {
     origin: allowAll ? true : origins,
     credentials: !allowAll,
     methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type', 'X-Session-Id'],
+    allowedHeaders: ['Content-Type', 'X-Session-Id', 'X-Session-Token'],
     exposedHeaders: ['RateLimit', 'RateLimit-Policy'],
     maxAge: 600
   };

@@ -3,6 +3,7 @@
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
 const { waitFor, emitWithAck, openSocket } = require('../helpers/socket-harness');
+const { createSession, sessionHeaders } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
@@ -11,14 +12,13 @@ const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 let ctx;
 
 async function sessionId(displayName) {
-  const res = await request(ctx.app).post('/api/sessions').send({ displayName });
-  return res.body.userId;
+  return createSession(ctx.app, displayName);
 }
 
 async function uploadPng(userId) {
   const res = await request(ctx.app)
     .post('/api/media')
-    .set('X-Session-Id', userId)
+    .set(sessionHeaders(userId))
     .attach('files', PNG_HEAD, { filename: 'shot.png', contentType: 'image/png' });
   return res.body.media[0];
 }
@@ -226,7 +226,7 @@ describe('idempotent sends', () => {
 
     const history = await request(ctx.app)
       .get('/api/rooms/retry/messages')
-      .set('X-Session-Id', userId);
+      .set(sessionHeaders(userId));
     const mine = history.body.messages.filter((message) => message.clientId === 'fixed-client-1');
     expect(mine).toHaveLength(1);
 
@@ -262,11 +262,11 @@ describe('message yourself', () => {
     const ack = await emitWithAck(socket, 'message', { text: 'pin this' });
     expect(ack.ok).toBe(true);
 
-    const history = await request(ctx.app).get(`/api/rooms/${room}/messages`).set('X-Session-Id', owner);
+    const history = await request(ctx.app).get(`/api/rooms/${room}/messages`).set(sessionHeaders(owner));
     expect(history.status).toBe(200);
     expect(history.body.messages.map((m) => m.text)).toContain('pin this');
 
-    const snooped = await request(ctx.app).get(`/api/rooms/${room}/messages`).set('X-Session-Id', intruder);
+    const snooped = await request(ctx.app).get(`/api/rooms/${room}/messages`).set(sessionHeaders(intruder));
     expect(snooped.status).toBe(403);
 
     const stranger = openSocket(ctx.url, intruder, room);
@@ -288,7 +288,7 @@ describe('message yourself', () => {
     expect(fake.ok).toBe(false);
     expect(fake.error).toMatch(/must name a session id/);
 
-    const http = await request(ctx.app).get('/api/rooms/self-alice/messages').set('X-Session-Id', userId);
+    const http = await request(ctx.app).get('/api/rooms/self-alice/messages').set(sessionHeaders(userId));
     expect(http.status).toBe(400);
 
     socket.close();
@@ -296,7 +296,7 @@ describe('message yourself', () => {
 
   test('the API hands the client its own room id', async () => {
     const userId = await sessionId('Bindu');
-    const res = await request(ctx.app).get('/api/me/self').set('X-Session-Id', userId);
+    const res = await request(ctx.app).get('/api/me/self').set(sessionHeaders(userId));
     expect(res.status).toBe(200);
     expect(res.body.room).toBe(`self-${userId}`);
   });
@@ -309,19 +309,19 @@ describe('personal notes', () => {
 
     const put = await request(ctx.app)
       .put('/api/me/note')
-      .set('X-Session-Id', owner)
+      .set(sessionHeaders(owner))
       .send({ text: '<script>alert(1)</script>at the gym, back by 7' });
     expect(put.status).toBe(200);
     expect(put.body.note.text).toBe('at the gym, back by 7');
     expect(put.body.note.updatedAt).toBeGreaterThan(0);
 
-    const read = await request(ctx.app).get('/api/me/note').set('X-Session-Id', owner);
+    const read = await request(ctx.app).get('/api/me/note').set(sessionHeaders(owner));
     expect(read.body.note.text).toBe('at the gym, back by 7');
 
-    const someoneElses = await request(ctx.app).get('/api/me/note').set('X-Session-Id', other);
+    const someoneElses = await request(ctx.app).get('/api/me/note').set(sessionHeaders(other));
     expect(someoneElses.body.note.text).toBe('');
 
-    const cleared = await request(ctx.app).put('/api/me/note').set('X-Session-Id', owner).send({ text: '' });
+    const cleared = await request(ctx.app).put('/api/me/note').set(sessionHeaders(owner)).send({ text: '' });
     expect(cleared.body.note.text).toBe('');
   });
 
@@ -329,7 +329,7 @@ describe('personal notes', () => {
     const owner = await sessionId('Harish');
     const res = await request(ctx.app)
       .put('/api/me/note')
-      .set('X-Session-Id', owner)
+      .set(sessionHeaders(owner))
       .send({ text: 'x'.repeat(600) });
     expect(res.status).toBe(400);
   });
@@ -348,7 +348,7 @@ describe('media library', () => {
     });
     expect(ack.ok).toBe(true);
 
-    const res = await request(ctx.app).get('/api/rooms/library/media').set('X-Session-Id', uploader);
+    const res = await request(ctx.app).get('/api/rooms/library/media').set(sessionHeaders(uploader));
     expect(res.status).toBe(200);
     const item = res.body.items.find((entry) => entry.id === media.id);
     expect(item.kind).toBe('image');
@@ -362,7 +362,7 @@ describe('media library', () => {
   test('the library of a self room is not readable by another session', async () => {
     const owner = await sessionId('Sitha');
     const intruder = await sessionId('Zoya');
-    const res = await request(ctx.app).get(`/api/rooms/self-${owner}/media`).set('X-Session-Id', intruder);
+    const res = await request(ctx.app).get(`/api/rooms/self-${owner}/media`).set(sessionHeaders(intruder));
     expect(res.status).toBe(403);
   });
 });

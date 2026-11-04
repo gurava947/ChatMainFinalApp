@@ -1,6 +1,7 @@
 'use strict';
 
 const { io: connect } = require('socket.io-client');
+const { getSessionToken } = require('./session-auth');
 
 const RECORDED_EVENTS = [
   'connect',
@@ -91,7 +92,7 @@ function emitWithAck(socket, event, payload, timeoutMs = 8000) {
 
 function openSocket(url, userId, room) {
   return record(connect(url, {
-    auth: { userId, room, roomPassword: 'InChatTestPassword!' },
+    auth: { userId, sessionToken: getSessionToken(userId), room, roomPassword: 'InChatTestPassword!' },
     transports: ['websocket'],
     forceNew: true
   }));

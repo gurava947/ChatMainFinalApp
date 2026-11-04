@@ -2,20 +2,19 @@
 
 const request = require('supertest');
 const { createTestServer } = require('../helpers/create-test-server');
+const { createSession: createTestSession, sessionHeaders } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
 let ctx;
 
 async function createSession(displayName) {
-  const response = await request(ctx.app).post('/api/sessions').send({ displayName });
-  expect(response.status).toBe(201);
-  return response.body.userId;
+  return createTestSession(ctx.app, displayName);
 }
 
 function accessRequest(method, room, userId, password) {
   const requestBuilder = request(ctx.app)[method](`/api/rooms/${room}/access`)
-    .set('X-Session-Id', userId);
+    .set(sessionHeaders(userId));
   return password === undefined ? requestBuilder.send({}) : requestBuilder.send({ password });
 }
 
@@ -59,13 +58,13 @@ describe('shared room passwords', () => {
 
     const blocked = await request(ctx.app)
       .get(`/api/rooms/${room}/messages`)
-      .set('X-Session-Id', guest);
+      .set(sessionHeaders(guest));
     expect(blocked.status).toBe(403);
 
     await accessRequest('post', room, guest, 'HistoryPass123');
     const allowed = await request(ctx.app)
       .get(`/api/rooms/${room}/messages`)
-      .set('X-Session-Id', guest);
+      .set(sessionHeaders(guest));
     expect(allowed.status).toBe(200);
   });
 

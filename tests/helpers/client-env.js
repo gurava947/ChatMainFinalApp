@@ -145,7 +145,7 @@ function installListenerTracking(targetNames) {
  * Boots the real client scripts inside jsdom with a fake socket, fetch and
  * upload transport. Returns the handles a test needs to drive them.
  */
-function loadClient({ rich = true, session = { userId: 'user-1', displayName: 'Arjun' } } = {}) {
+function loadClient({ rich = true, session = { userId: 'user-1', sessionToken: 'A'.repeat(43), displayName: 'Arjun' } } = {}) {
   if (previousTeardown) previousTeardown();
   previousTeardown = installListenerTracking(['window', 'document']);
 
