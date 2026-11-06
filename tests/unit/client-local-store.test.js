@@ -187,6 +187,24 @@ describe("a room's own cursor", () => {
     await store.forgetRoomState(ROOM);
     expect(await store.readRoomState(ROOM)).toBeNull();
   });
+
+  /**
+   * The client calls this on every write to say where the copy now starts and
+   * stops. A row the server has not numbered is not an edge of anything, and a
+   * sequence of 0 - the first row a room ever held - is: `Number(null)` is 0, so
+   * the two are only told apart by checking for the value before coercing it.
+   */
+  it('measures the span of a transcript', () => {
+    expect(store.seqSpan([row('m5', 5), row('m1', 1), row('draft', null), row('m3', 3)]))
+      .toEqual({ oldest: 1, latest: 5 });
+    expect(store.seqSpan([row('m0', 0), row('m2', 2)])).toEqual({ oldest: 0, latest: 2 });
+  });
+
+  it('has no span at all when nothing is numbered', () => {
+    expect(store.seqSpan([])).toEqual({ oldest: null, latest: null });
+    expect(store.seqSpan([{ id: 'draft' }, null, undefined])).toEqual({ oldest: null, latest: null });
+    expect(store.seqSpan()).toEqual({ oldest: null, latest: null });
+  });
 });
 
 describe('the outbox', () => {
@@ -277,6 +295,20 @@ describe('attachment metadata', () => {
 
     expect(await store.deleteMedia(['fresh'])).toBe(1);
     expect(await store.readMedia('fresh')).toBeNull();
+  });
+
+  /**
+   * "Clear chat" and "delete chat" drop the transcript, and the file list that
+   * describes it goes with it - but only for the room that was forgotten.
+   */
+  it('drops the attachment metadata of the room that was forgotten', async () => {
+    await store.storeMedia(ROOM, [{ id: 'mine', messageId: 'm1', kind: 'image' }]);
+    await store.storeMedia(OTHER, [{ id: 'theirs', messageId: 'm9', kind: 'file' }]);
+
+    expect(await store.deleteRoomMedia(ROOM)).toBe(1);
+    expect(await store.readMedia('mine')).toBeNull();
+    expect(await store.readMedia('theirs')).toMatchObject({ room: OTHER });
+    expect(await store.deleteRoomMedia('')).toBe(0);
   });
 });
 

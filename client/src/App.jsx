@@ -31,6 +31,14 @@ import {
   playOrder, timeLeftLabel, viewersLabel,
 } from './statusFeed'
 import { collectVideoClips } from './shortsFeed'
+import {
+  attachmentRows, mergeMessage, mergePage, mergeServerPage, olderCursor, rowsToPersist,
+} from './transcript'
+import {
+  clearCalls, deleteMedia, deleteMessages, deleteRoomMedia, deleteRoomMessages, forgetRoomState, isQuotaError,
+  readCalls, readMessagePage, readProfiles, readRoomState, saveRoomState, seqSpan,
+  storeCalls, storeMedia, storeMessages, storeProfiles,
+} from './localStore'
 import useRoomCalls from './useRoomCalls'
 
 const navItems = [
@@ -512,40 +520,6 @@ function RichComposer({ kind, onClose, onSend, onCancel }) {
   )
 }
 
-/**
- * Ordered by the sequence the store minted, falling back to the timestamp for
- * rows this device has not had accepted yet. Sorting by `ts` alone reordered a
- * room whenever two replicas wrote in the same millisecond.
- */
-function byArrival(a, b) {
-  const aSeq = Number.isFinite(a.seq) ? a.seq : null
-  const bSeq = Number.isFinite(b.seq) ? b.seq : null
-  const aKnown = aSeq !== null
-  const bKnown = bSeq !== null
-  if (aKnown && bKnown) return aSeq - bSeq || a.ts - b.ts
-  if (aKnown !== bKnown) return aKnown ? -1 : 1
-  return a.ts - b.ts
-}
-
-function mergeMessage(list, incoming) {
-  const index = list.findIndex((item) => item.id === incoming.id || (incoming.clientId && item.clientId === incoming.clientId))
-  if (index < 0) return [...list, incoming].sort(byArrival)
-  const next = [...list]
-  next[index] = { ...next[index], ...incoming, pending: false, failed: false }
-  return next.sort(byArrival)
-}
-
-/**
- * Adds an older page without losing the local state (pending, failed) the
- * current rows already carry. The same reference comes back when the page held
- * nothing new, so the transcript does not repaint for an empty fetch.
- */
-function mergePage(list, older) {
-  const known = new Set(list.map((message) => message.id))
-  const fresh = older.filter((message) => !known.has(message.id))
-  return fresh.length ? [...fresh, ...list].sort(byArrival) : list
-}
-
 function BrandMark() {
   return (
     <div className="brand-mark" role="img" aria-label="InChat India logo">
@@ -938,7 +912,9 @@ function PairingSection({ chat, session }) {
   )
 }
 
-function ChatSettingsSheet({ chat, session, settings, onClose, onSettingsChange, onHistoryRefresh, onChatDeleted }) {
+function ChatSettingsSheet({
+  chat, session, settings, onClose, onSettingsChange, onHistoryRefresh, onChatDeleted, onLocalClear, onLocalForget,
+}) {
   const [pending, setPending] = useState('')
   const [status, setStatus] = useState('')
   const [confirming, setConfirming] = useState('')
@@ -990,10 +966,13 @@ function ChatSettingsSheet({ chat, session, settings, onClose, onSettingsChange,
   const clearChat = () => run('clear', async () => {
     const cleared = await clearChatForMe(session, chat.id)
     onSettingsChange({ ...settings, ...cleared })
+    // The view goes blank here; the device's own copy of those rows goes with it.
+    await onLocalClear?.()
   }, 'History cleared for you. New messages still arrive.')
 
   const deleteChat = () => run('delete', async () => {
     const result = await deleteChatForMe(session, chat.id)
+    await onLocalForget?.()
     onChatDeleted(result)
     return result
   }, (result) => (result.selfRoomDeleted
@@ -1087,6 +1066,14 @@ function ChatSettingsSheet({ chat, session, settings, onClose, onSettingsChange,
   )
 }
 
+/**
+ * Rows read off this device before the room's socket has said anything.
+ *
+ * Bigger than the server's page on purpose: the point of a local transcript is
+ * that a reload shows more than a fresh join would.
+ */
+const LOCAL_HYDRATION_LIMIT = 200
+
 function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, autoCall, onAutoCallHandled }) {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState([])
@@ -1126,6 +1113,14 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const seenQueueRef = useRef(new Set())
   const seenSentRef = useRef(new Set())
   const seenFlushTimerRef = useRef(null)
+  /** Rows this device has committed to its local store, and rows that have since changed. */
+  const persistedRef = useRef(new Set())
+  const dirtyRef = useRef(new Set())
+  /** The newest row this viewer has seen; `undefined` until this room has shown one. */
+  const previewedRef = useRef(undefined)
+  /** The list callback is read through a ref because the socket handlers bind once per room. */
+  const onLatestMessageRef = useRef(onLatestMessage)
+  useEffect(() => { onLatestMessageRef.current = onLatestMessage }, [onLatestMessage])
   const galleryInputRef = useRef(null)
   const fileInputRef = useRef(null)
   const recorderRef = useRef(null)
@@ -1170,6 +1165,133 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     setNotice(text)
     window.clearTimeout(noticeTimerRef.current)
     noticeTimerRef.current = window.setTimeout(() => setNotice(''), 3500)
+  }
+
+  /**
+   * Reads this device's own copy of the room before the network has answered.
+   *
+   * IndexedDB is the primary store, so the transcript is shown from disk and the
+   * server's page is folded over it rather than the other way round. A guest who
+   * reloads in a room whose server is down now reads their own conversation,
+   * which is the behaviour the storage layer exists to buy. The stored cursor is
+   * kept because it usually reaches further back than the server's page.
+   */
+  useEffect(() => {
+    let active = true
+    Promise.all([readMessagePage(chat.id, { limit: LOCAL_HYDRATION_LIMIT }), readRoomState(chat.id)])
+      .then(([rows, state]) => {
+        if (!active || !rows.length) return
+        rows.forEach((row) => persistedRef.current.add(row.id))
+        // Only the rows this device does not already have are taken from disk:
+        // whatever the socket delivered arrived after the read started and is
+        // newer than the copy on it, receipts included.
+        setMessages((current) => mergePage(current, rows))
+        setHistoryCursor((current) => olderCursor(current, state?.oldestSeq ?? rows[0].seq))
+      })
+      .catch(() => { /* no local store, no change: the room behaves the way it always did */ })
+    return () => { active = false }
+    // One read per room per guest; the component is keyed on both.
+  }, [chat.id, session.userId])
+
+  /**
+   * Writes what the transcript has just learned, in the order it matters.
+   *
+   * Rows first, then the attachment metadata that describes them, then the
+   * room's cursor - so a store interrupted halfway never records a cursor
+   * pointing at rows it does not hold. Only rows this device has not committed
+   * (or has since changed) are written, and a row is counted as held only once
+   * the transaction commits. A failure keeps the rows dirty, so the next change
+   * in this room retries, and says so out loud: a chat that looks saved but is
+   * not there after a reload is the one outcome a guest cannot discover alone.
+   */
+  useEffect(() => {
+    const fresh = rowsToPersist(visibleMessages, persistedRef.current, dirtyRef.current)
+    if (!fresh.length) return
+    const files = attachmentRows(fresh)
+    const span = seqSpan(visibleMessages)
+    storeMessages(chat.id, fresh)
+      .then(() => (files.length ? storeMedia(chat.id, files) : 0))
+      .then(() => saveRoomState(chat.id, { oldestSeq: span.oldest, latestSeq: span.latest }))
+      .then(() => {
+        fresh.forEach((message) => {
+          persistedRef.current.add(message.id)
+          dirtyRef.current.delete(message.id)
+        })
+      })
+      .catch((error) => {
+        showNotice(isQuotaError(error)
+          ? 'This device is out of storage space, so this chat is not being kept locally.'
+          : 'This chat could not be saved on this device.')
+      })
+    // The view this guest is allowed to see, not the raw list: a message they
+    // blocked, deleted or cleared away is not theirs to keep a copy of.
+  }, [visibleMessages, chat.id])
+
+  /**
+   * Keeps the room list's preview in step with what this viewer can see.
+   *
+   * The list is written when a message arrives, but deleting or clearing a
+   * transcript changes the newest row without anything arriving. Without this
+   * the room list - and the copy of it in localStorage - would go on showing the
+   * text of the message the guest just asked to have gone.
+   */
+  useEffect(() => {
+    const newest = visibleMessages.length ? visibleMessages[visibleMessages.length - 1] : null
+    const id = newest ? newest.id : null
+    if (previewedRef.current === id) return
+    // An empty room that has never shown a message here is not a deletion, and
+    // the list keeps whatever the last visit wrote until this one says otherwise.
+    if (previewedRef.current === undefined && id === null) return
+    previewedRef.current = id
+    onLatestMessageRef.current(chat.id, newest)
+  }, [visibleMessages, chat.id])
+
+  /**
+   * The server has forgotten these rows for this viewer, so this device must too.
+   *
+   * "Delete for me" and "clear chat" are viewer-scoped on the server; leaving the
+   * local copy behind would resurrect messages the guest removed, and spend quota
+   * on a transcript nobody is allowed to see any more.
+   */
+  const dropLocalMessages = async (ids) => {
+    try {
+      // The attachment rows are named by the messages that carried them, and
+      // those are still on screen, so no scan of the media store is needed.
+      const files = messages
+        .filter((message) => ids.includes(message.id))
+        .flatMap((message) => (message.attachments || []).map((file) => file.id))
+      await deleteMessages(chat.id, ids)
+      await deleteMedia(files)
+      ids.forEach((id) => {
+        persistedRef.current.delete(id)
+        dirtyRef.current.delete(id)
+      })
+    } catch {
+      showNotice('Deleted on the server, but some rows are still on this device.')
+    }
+  }
+
+  const clearLocalRoom = async () => {
+    try {
+      const [removed] = await Promise.all([deleteRoomMessages(chat.id), deleteRoomMedia(chat.id)])
+      // Every row still on screen belongs to the past this guest just cleared:
+      // they are marked as handled so the next message cannot write them back.
+      messages.forEach((message) => persistedRef.current.add(message.id))
+      return removed
+    } catch {
+      showNotice('Cleared on the server, but this device kept its local copy.')
+      return 0
+    }
+  }
+
+  /** The whole room is gone for this guest, and the local copy goes with it. */
+  const forgetLocalRoom = async () => {
+    try {
+      await Promise.all([deleteRoomMessages(chat.id), deleteRoomMedia(chat.id), forgetRoomState(chat.id)])
+      messages.forEach((message) => persistedRef.current.add(message.id))
+    } catch {
+      showNotice('Deleted on the server, but this device still holds its own copy.')
+    }
   }
 
   /**
@@ -1236,8 +1358,10 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     try {
       const rows = await fetchRoomMessages(session, chat.id)
       const history = rows.map((message) => toUiMessage(message, session))
-      setMessages((current) => history.reduce(mergeMessage, current.filter((message) => message.pending || message.failed)))
-      setHistoryCursor(history.length ? history[0].seq ?? null : null)
+      setMessages((current) => mergeServerPage(current, history))
+      // The page is the room's newest window; this device may already reach
+      // further back, and paging from the newer edge would hide what it holds.
+      setHistoryCursor((current) => olderCursor(current, history.length ? history[0].seq : null))
     } catch (error) {
       showNotice(error.message)
     }
@@ -1286,6 +1410,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     try {
       const hidden = await deleteMessagesForMe(session, chat.id, ids)
       setChatSettings((current) => ({ ...current, hidden }))
+      await dropLocalMessages(ids)
       setSelectedIds(new Set())
       setSelectMode(false)
       showNotice(`${ids.length} message${ids.length === 1 ? '' : 's'} deleted for you.`)
@@ -1301,6 +1426,8 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     onClose: () => setSettingsOpen(false),
     onSettingsChange: setChatSettings,
     onHistoryRefresh: reloadHistory,
+    onLocalClear: clearLocalRoom,
+    onLocalForget: forgetLocalRoom,
     onChatDeleted: (result) => {
       showNotice(result.selfRoomDeleted
         ? `Your room was emptied — ${result.removed} message${result.removed === 1 ? '' : 's'} gone.`
@@ -1369,12 +1496,10 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     roomSocket.on('history', (payload) => {
       if (payload.room !== chat.id) return
       const history = (payload.messages || []).map((message) => toUiMessage(message, session))
-      setMessages((current) => {
-        const pending = current.filter((message) => message.pending || message.failed)
-        return history.reduce(mergeMessage, pending)
-      })
-      // Rows arrive oldest first, so the first one is where the next page begins.
-      setHistoryCursor(history.length ? history[0].seq ?? null : null)
+      setMessages((current) => mergeServerPage(current, history))
+      // Rows arrive oldest first, so the first one is where the next page begins -
+      // unless this device's own copy already reaches under it.
+      setHistoryCursor((current) => olderCursor(current, history.length ? history[0].seq : null))
       if (history.length) onLatestMessage(chat.id, history[history.length - 1])
     })
     roomSocket.on('new_message', (message) => {
@@ -1399,6 +1524,9 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     const applyReceipt = (field) => (receipt) => {
       if (receipt.room && receipt.room !== chat.id) return
       const ids = receipt.messageIds || [receipt.messageId]
+      // The ticks are part of the copy this device keeps, so a row whose
+      // receipts moved has to be written again rather than left as first stored.
+      ids.forEach((id) => dirtyRef.current.add(id))
       setMessages((current) => current.map((message) => {
         if (!ids.includes(message.id)) return message
         const holders = new Set(message[field] || [])
@@ -1411,11 +1539,14 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     roomSocket.on('message_seen', applyReceipt('seenBy'))
     roomSocket.on('poll_voted', (payload) => {
       if (payload.room !== chat.id || !payload.results) return
+      dirtyRef.current.add(payload.messageId)
       setMessages((current) => current.map((message) => (
         message.id === payload.messageId ? { ...message, results: payload.results } : message
       )))
     })
-    roomSocket.on('presence', (snapshot) => setPresenceCount(Number(snapshot.connections) || 0))
+    // The header says "people", so it has to count people: one guest holding two
+    // tabs is two connections, and a room that legally fits two would claim three.
+    roomSocket.on('presence', (snapshot) => setPresenceCount(Number(snapshot.onlineUsers ?? snapshot.connections) || 0))
     roomSocket.on('system', (payload) => {
       if (payload.type === 'error') showNotice(payload.message || 'Room connection error.')
       // The server closed this socket because the session behind it is gone, so
@@ -1458,8 +1589,26 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     )].filter((userId) => !(userId in profilesRef.current))
     if (!missing.length) return
     let active = true
+    // The faces this device already knows go on first, so a reload does not
+    // show initials where there were pictures a second ago. The request below
+    // still runs and still wins: an author who changed their avatar since the
+    // last visit sees the new one on the next load, not after a cache clear.
+    readProfiles(missing)
+      .then((cached) => {
+        if (!active || !cached.length) return
+        setProfiles((current) => {
+          const next = { ...current }
+          cached.forEach((profile) => { if (profile?.userId && !(profile.userId in next)) next[profile.userId] = profile })
+          return next
+        })
+      })
+      .catch(() => { /* a cold cache only means waiting for the server */ })
     fetchProfiles(session, missing)
-      .then((rows) => { if (active) setProfiles((current) => ({ ...current, ...rows })) })
+      .then((rows) => {
+        if (!active) return
+        setProfiles((current) => ({ ...current, ...rows }))
+        storeProfiles(Object.values(rows)).catch(() => {})
+      })
       .catch(() => { /* a room without pictures still works; initials take over */ })
     return () => { active = false }
   }, [messages, session])
@@ -1544,7 +1693,20 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
         showNotice(acknowledgement?.error === 'rate_limited' ? 'You are sending messages too quickly.' : 'Message not sent. Check the connection and try again.')
         return
       }
-      setMessages((current) => current.map((message) => message.clientId === clientId ? { ...message, id: acknowledgement.id, ts: acknowledgement.ts || message.ts, time: formatTime(acknowledgement.ts || message.ts), pending: false } : message))
+      // The ack's sequence is the store's own arrival number: filing the row by
+      // it the moment the server accepts it is what lets this device write the
+      // message to its local transcript instead of waiting for a live copy of
+      // its own send to arrive back over the socket.
+      setMessages((current) => current.map((message) => (message.clientId === clientId
+        ? {
+          ...message,
+          id: acknowledgement.id || message.id,
+          seq: Number.isFinite(Number(acknowledgement.seq)) ? Number(acknowledgement.seq) : message.seq,
+          ts: acknowledgement.ts || message.ts,
+          time: formatTime(acknowledgement.ts || message.ts),
+          pending: false,
+        }
+        : message)))
     })
     return true
   }
@@ -2494,8 +2656,19 @@ function CallsPage({ guest, notice: returnedNotice, onOpenRoom, onCallBack }) {
     }
     let active = true
     setLoading(true)
+    // The log on this device is shown straight away, so the Calls tab is never
+    // blank while the server is still answering - or empty because it is not
+    // answering at all. The fetch below replaces it, and is the authority.
+    readCalls()
+      .then((cached) => { if (active && cached.length) setCalls((current) => (current.length ? current : cached)) })
+      .catch(() => { /* a cold cache just means waiting for the fetch below */ })
     fetchCallHistory(guest)
-      .then((rows) => { if (active) { setCalls(rows); setFailure('') } })
+      .then((rows) => {
+        if (!active) return
+        setCalls(rows)
+        setFailure('')
+        storeCalls(rows).catch(() => {})
+      })
       .catch((error) => { if (active) setFailure(error.message || 'Could not load your call history.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
@@ -2507,6 +2680,7 @@ function CallsPage({ guest, notice: returnedNotice, onOpenRoom, onCallBack }) {
     try {
       await clearCallHistory(guest)
       setCalls([])
+      await clearCalls().catch(() => {})
       showNotice('Call history cleared on every device for this guest.')
     } catch (error) {
       showNotice(error.message || 'Could not clear your call history.')
@@ -2668,6 +2842,7 @@ function App() {
   }
 
   const updateRoomPreview = (roomId, message) => {
+    if (!message) return forgetRoomPreview(roomId)
     const text = message.text || describeMessage(message)
     const summary = { message: text.length > 70 ? `${text.slice(0, 67)}…` : text, time: message.time || formatTime(message.ts) }
     setRooms((current) => {
@@ -2676,6 +2851,13 @@ function App() {
       return next
     })
   }
+
+  /** Nothing left to preview: the row goes back to the empty-room wording. */
+  const forgetRoomPreview = (roomId) => setRooms((current) => {
+    const next = current.map((room) => room.id === roomId ? { ...room, message: '', time: '' } : room)
+    saveRooms(next)
+    return next
+  })
 
   const shellClass = location.pathname === '/calls' ? 'app-shell calls-route' : location.pathname === '/' ? 'app-shell home-route' : location.pathname === '/updates' ? 'app-shell updates-route' : 'app-shell'
   const signOut = () => {

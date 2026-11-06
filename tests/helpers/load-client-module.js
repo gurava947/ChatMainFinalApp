@@ -74,13 +74,24 @@ const LOCAL_STORE_EXPORTS = [
   'isQuotaError', 'storableRows', 'messageRecord', 'mergeRecord',
   'storeMessages', 'readMessagePage', 'readOlderMessages', 'readNewerMessages',
   'findMessageByClientId', 'deleteMessages', 'deleteRoomMessages',
-  'readRoomState', 'saveRoomState', 'listRoomStates', 'forgetRoomState',
+  'readRoomState', 'saveRoomState', 'listRoomStates', 'forgetRoomState', 'seqSpan',
   'storeProfiles', 'readProfile', 'readProfiles',
   'storeCalls', 'readCalls', 'clearCalls',
   'queueOutbox', 'readOutbox', 'bumpOutboxTries', 'resolveOutbox', 'clearOutbox',
-  'storeMedia', 'readMedia', 'listMedia', 'deleteMedia',
+  'storeMedia', 'readMedia', 'listMedia', 'deleteMedia', 'deleteRoomMedia',
   'readMeta', 'writeMeta',
   'readUsage', 'requestPersistence', 'enforceRetention',
+];
+
+/**
+ * The transcript rules the room component folds its rows through. They live in
+ * their own module so the reconciliation a guest sees after a reconnect - what
+ * order, what survives, what gets written to IndexedDB - is asserted against the
+ * shipped source rather than against a copy of it.
+ */
+const TRANSCRIPT_EXPORTS = [
+  'byArrival', 'mergeMessage', 'mergePage', 'mergeServerPage', 'olderCursor',
+  'rowsToPersist', 'attachmentRows',
 ];
 
 /**
@@ -138,14 +149,18 @@ function loadShortsFeed() {
   return loadClientModule('shortsFeed.js', SHORTS_FEED_EXPORTS);
 }
 
+function loadTranscript() {
+  return loadClientModule('transcript.js', TRANSCRIPT_EXPORTS);
+}
+
 function loadLocalStore() {
   return loadClientModule('localStore.js', LOCAL_STORE_EXPORTS);
 }
 
 module.exports = {
   loadRoomChat, loadRichCards, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore,
+  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
   NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
-  LOCAL_STORE_EXPORTS,
+  LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS,
 };

@@ -426,6 +426,25 @@ export function readRoomState(room) {
 }
 
 /**
+ * The first and last sequence in a list of rows.
+ *
+ * A loop, not `Math.max(...rows.map(...))`: a transcript long enough to spread
+ * over the argument list is exactly the transcript this store is built to hold,
+ * and a row the server has not numbered yet contributes nothing to either end.
+ */
+export function seqSpan(rows) {
+  let oldest = null
+  let latest = null
+  for (const row of rows || []) {
+    const value = sequenceOf(row && row.seq)
+    if (value === null) continue
+    if (oldest === null || value < oldest) oldest = value
+    if (latest === null || value > latest) latest = value
+  }
+  return { oldest, latest }
+}
+
+/**
  * Remembers how far this device's copy of a room reaches.
  *
  * `latestSeq` is what a reconnect compares against the server to find what it
@@ -654,6 +673,24 @@ export function deleteMedia(ids) {
     list.forEach((id) => store.delete(id))
     return list.length
   }).then((count) => count || 0)
+}
+
+/**
+ * Every attachment a room described, dropped with the room.
+ *
+ * The bytes were never stored here, so this is bookkeeping - but bookkeeping is
+ * what a guest who cleared or deleted a room expects to be gone, and it is the
+ * only media row this device can name once the transcript itself has been
+ * dropped. Media is keyed by the file, not the room, so there is no index to
+ * walk: the store is metadata only and retention bounds how long it grows.
+ */
+export function deleteRoomMedia(room) {
+  if (!room) return Promise.resolve(0)
+  return transact(STORE_MEDIA, 'readwrite', (store) => requestResult(store.getAll()).then((rows) => {
+    const mine = (rows || []).filter((row) => row && row.room === room)
+    mine.forEach((row) => store.delete(row.id))
+    return mine.length
+  })).then((count) => count || 0)
 }
 
 /* ----------------------------------------------------------------------- meta */
