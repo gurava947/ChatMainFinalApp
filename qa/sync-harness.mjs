@@ -9,7 +9,13 @@ const ROUND = Number(process.argv[2] || 1);
 const SUITE = process.argv[3] || 'all';
 const TAG = `r${ROUND}`;
 const room = (name) => `qa-${TAG}-${name}`;
-const PASS = 'qa-pass-12345';
+
+/**
+ * Pairing codes live here and nowhere else. A room's first accessor is handed
+ * its code exactly once, so a probe that wants a second member has to hold on
+ * to it - the same way the browser keeps it only in the owner's settings panel.
+ */
+const inviteCodes = new Map();
 
 const results = [];
 function record(id, name, status, detail) {
@@ -38,30 +44,36 @@ async function newSession(port, displayName) {
   return body;
 }
 
-/** Create/join a room for this session so later socket joins are allowed. */
-async function join(port, s, R, password = PASS) {
+/**
+ * Takes this session a seat in the room. With no code known yet the call claims
+ * the room and answers with the code; from then on the code is supplied, so the
+ * harness pairs the way two real browsers would.
+ */
+async function join(port, s, R) {
+  const credential = inviteCodes.get(R);
   const res = await api(port, `/api/rooms/${R}/access`, {
-    method: 'POST', headers: auth(s), body: JSON.stringify({ password })
+    method: 'POST', headers: auth(s), body: JSON.stringify(credential ? { credential } : {})
   });
   if (res.status !== 201 && res.status !== 200) throw new Error(`room join failed ${res.status} ${JSON.stringify(res.body)} (${s.displayName})`);
+  if (res.body.inviteCode) inviteCodes.set(R, res.body.inviteCode);
   return res;
 }
 
 /** session + room membership in one call */
-const member = async (port, name, R, password = PASS) => {
+const member = async (port, name, R) => {
   const s = await newSession(port, name);
-  await join(port, s, R, password);
+  await join(port, s, R);
   return s;
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const settle = (ms = 600) => sleep(ms);
 
-function connect(port, s, R, label, password = PASS) {
+function connect(port, s, R, label) {
   const log = { newMessage: [], history: [], presence: [], userJoined: [], userLeft: [], seen: [], delivered: [], system: [], connectError: [] };
   const socket = io(`http://127.0.0.1:${port}`, {
     transports: ['websocket'],
-    auth: { userId: s.userId, sessionToken: s.sessionToken, room: R, roomPassword: password },
+    auth: { userId: s.userId, sessionToken: s.sessionToken, room: R, roomCredential: inviteCodes.get(R) },
     reconnection: false,
     timeout: 5000
   });
@@ -146,56 +158,65 @@ async function t2() {
 }
 
 /* ------------------------------------------------------------------ *
- * T3 multi-session realtime fan-out on one instance (4 sessions)
+ * T3 realtime fan-out to the peer seat, exactly once (single instance)
  * ------------------------------------------------------------------ */
 async function t3() {
   const R = room('fanout');
   const list = [];
-  for (let i = 0; i < 4; i++) list.push(await member(3002, `${TAG}-fan${i}`, R));
+  for (let i = 0; i < 2; i++) list.push(await member(3002, `${TAG}-fan${i}`, R));
   const clients = [];
   try {
-    for (let i = 0; i < 4; i++) clients.push(await open(connect(3002, list[i], R, `fan${i}`)));
+    for (let i = 0; i < 2; i++) clients.push(await open(connect(3002, list[i], R, `fan${i}`)));
     await settle(600);
     const ack = await send(clients[0], { room: R, text: `fanout ${TAG}`, clientId: `${TAG}-t3` });
     await settle(1000);
     const got = clients.slice(1).map((c) => c.log.newMessage.length);
     const selfGot = clients[0].log.newMessage.length;
     const presence = clients[0].log.presence.at(-1);
-    record('T3', '4-session realtime fan-out (single instance)',
+    record('T3', 'peer fan-out on one instance (two-seat room)',
       got.every((n) => n === 1) ? 'PASS' : 'FAIL',
       { sendAckOk: ack.ok, peerReceipts: got, senderOwnCopies: selfGot,
         presenceConnections: presence?.connections, presenceOnlineUsers: presence?.onlineUsers,
-        verdict: got.every((n) => n === 1) ? 'all 3 peers got exactly one copy' : 'fan-out incomplete or duplicated' });
+        verdict: got.every((n) => n === 1) ? 'the peer seat got exactly one copy' : 'fan-out incomplete or duplicated' });
   } finally { await closeAll(clients); }
 }
 
 /* ------------------------------------------------------------------ *
- * T4 room password divergence across instances
+ * T4 the roster is one record, not one per process
  * ------------------------------------------------------------------ */
 async function t4() {
-  const R = room('pw');
-  const p1 = `${TAG}-first-pass`;
-  const p2 = `${TAG}-second-pass`;
-  const a = await newSession(3000, `${TAG}-pwa`);
-  const b = await newSession(3000, `${TAG}-pwb`);
-  const c = await newSession(3001, `${TAG}-pwc`);
-  const d = await newSession(3001, `${TAG}-pwd`);
-  const set = (port, s, password) => api(port, `/api/rooms/${R}/access`, {
-    method: 'POST', headers: auth(s), body: JSON.stringify({ password })
+  const R = room('roster');
+  const owner = await newSession(3000, `${TAG}-ro-owner`);
+  const claim = await join(3000, owner, R);
+  const code = inviteCodes.get(R);
+  const guest = await newSession(3001, `${TAG}-ro-guest`);
+  const paired = await join(3001, guest, R);
+  const intruder = await newSession(3000, `${TAG}-ro-intruder-3000`);
+  const intruderPeer = await newSession(3001, `${TAG}-ro-intruder-3001`);
+  const attempt = (port, s, credential) => api(port, `/api/rooms/${R}/access`, {
+    method: 'POST', headers: auth(s), body: JSON.stringify(credential ? { credential } : {})
   });
-  // Origin sets p1. A different guest then reaches the peer instance first with p2.
-  const first = await set(3000, a, p1);
-  const wrongOnOrigin = await set(3000, b, p2);
-  const peerSecretSet = await set(3001, d, p2);
-  const originPassOnPeer = await set(3001, c, p1);
-  const diverged = wrongOnOrigin.status === 403 && peerSecretSet.status < 300 && originPassOnPeer.status === 403;
-  record('T4', 'room password consistency across instances',
-    diverged ? 'FAIL' : 'PASS',
-    { firstSetOn3000: first.status, wrongPassRejectedOn3000: wrongOnOrigin.status,
-      peerAcceptedItsOwnSecret3001: peerSecretSet.status, originPasswordNowRejectedOn3001: originPassOnPeer.status,
-      verdict: diverged
-        ? 'the same room name holds two different shared secrets: p2 was rejected on 3000 but became the room password on 3001, and the origin secret p1 no longer works there. Which secret is valid depends on which replica answers the join.'
-        : 'consistent' });
+  const thirdOnOrigin = await attempt(3000, intruder, code);
+  const thirdOnPeer = await attempt(3001, intruderPeer, code);
+  const openAttempt = await attempt(3000, intruder);
+  const historyAsStranger = await api(3000, `/api/rooms/${R}/messages`, { headers: auth(intruder) });
+  const ownerReadsPeerInstance = await api(3001, `/api/rooms/${R}/messages`, { headers: auth(owner) });
+  const full = (res) => res.status === 403 && res.body.error === 'room_is_full';
+  const agrees = full(thirdOnOrigin) && full(thirdOnPeer)
+    && openAttempt.status === 403 && historyAsStranger.status === 403
+    && ownerReadsPeerInstance.status < 300;
+  record('T4', 'two-seat cap and membership agree across instances',
+    agrees ? 'PASS' : 'FAIL',
+    { claim: { status: claim.status, role: claim.body.role, codeLength: code?.length },
+      paired: { status: paired.status, role: paired.body.role },
+      thirdOn3000: { status: thirdOnOrigin.status, error: thirdOnOrigin.body.error },
+      thirdOn3001: { status: thirdOnPeer.status, error: thirdOnPeer.body.error },
+      noCodeOn3000: { status: openAttempt.status, error: openAttempt.body.error },
+      strangerHistory: { status: historyAsStranger.status, error: historyAsStranger.body.error },
+      ownerHistoryOnPeer: ownerReadsPeerInstance.status,
+      verdict: agrees
+        ? 'both replicas refuse the third seat with the same reason, an unnamed room name is no longer readable without a seat, and the roster itself travels between processes'
+        : 'a seat taken on one instance is not seen by the other, so the cap depends on which replica answers the join' });
 }
 
 /* ------------------------------------------------------------------ *
@@ -235,24 +256,23 @@ async function t5() {
  * ------------------------------------------------------------------ */
 async function t6() {
   const R = room('presence');
-  const origin = [], peer = [];
-  for (let i = 0; i < 3; i++) origin.push(await member(3000, `${TAG}-po${i}`, R));
-  for (let i = 0; i < 2; i++) peer.push(await member(3001, `${TAG}-pp${i}`, R));
+  const origin = [await member(3000, `${TAG}-po0`, R)];
+  const peer = [await member(3001, `${TAG}-pp0`, R)];
   const clients = [];
   try {
     for (const s of origin) clients.push(await open(connect(3000, s, R, 'origin')));
     for (const s of peer) clients.push(await open(connect(3001, s, R, 'peer')));
     await settle(900);
     const viewA = clients[0].log.presence.at(-1);
-    const viewB = clients[3].log.presence.at(-1);
-    const agree = viewA?.onlineUsers === 5 && viewB?.onlineUsers === 5;
-    record('T6', 'presence agreement across instances (3 on 3000, 2 on 3001)',
+    const viewB = clients[1].log.presence.at(-1);
+    const agree = viewA?.onlineUsers === 2 && viewB?.onlineUsers === 2;
+    record('T6', 'presence agreement across instances (one seat on each)',
       agree ? 'PASS' : 'FAIL',
       { viewFrom3000: { connections: viewA?.connections, onlineUsers: viewA?.onlineUsers },
         viewFrom3001: { connections: viewB?.connections, onlineUsers: viewB?.onlineUsers },
-        actualTotal: 5,
+        actualTotal: 2,
         verdict: agree ? 'both agree'
-          : 'each replica reports only its own sockets: the online count is wrong whenever users split across instances, and user_joined/user_left never cross a process boundary' });
+          : 'each replica reports only its own sockets: the online count is wrong whenever the two seats land on different instances, and user_joined/user_left never cross a process boundary' });
   } finally { await closeAll(clients); }
 }
 
@@ -652,7 +672,62 @@ async function t17() {
   await closeAll([c]);
 }
 
-const suites = { t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17 };
+/* ------------------------------------------------------------------ *
+ * T18 a rotated code is dead on every replica, and the socket path
+ * admits seats through the roster rather than because it was asked
+ * ------------------------------------------------------------------ */
+async function t18() {
+  const R = room('rotate');
+  const owner = await member(3000, `${TAG}-rot-owner`, R);
+  const oldCode = inviteCodes.get(R);
+
+  const rotated = await api(3000, `/api/rooms/${R}/invite`, { method: 'POST', headers: auth(owner), body: '{}' });
+  const newCode = rotated.body.inviteCode;
+  inviteCodes.set(R, newCode);
+
+  const stranger = await newSession(3001, `${TAG}-rot-stranger`);
+  const attempt = (s, credential) => api(3001, `/api/rooms/${R}/access`, {
+    method: 'POST', headers: auth(s), body: JSON.stringify({ credential })
+  });
+  const stale = await attempt(stranger, oldCode);
+  const fresh = await attempt(stranger, newCode);
+  const notOwner = await api(3000, `/api/rooms/${R}/invite`, { method: 'POST', headers: auth(stranger), body: '{}' });
+
+  // The room is at capacity now, so a socket that presents the live code for a
+  // seat that is not free has to be refused by the handshake, not waved through
+  // because it arrived before the first packet.
+  const fourth = await newSession(3001, `${TAG}-rot-fourth`);
+  const c = connect(3001, fourth, R, 'rot-full');
+  let joinAck = null;
+  try {
+    await open(c);
+    await settle(700);
+    joinAck = await ackOf(c, 'room:join', { room: R, credential: newCode });
+  } catch (err) {
+    joinAck = { ok: false, error: String(err.message) };
+  }
+  const refusedByHandshake = c.log.system.some((e) => e.reason === 'room_is_full');
+  const pageArrived = c.log.history.some((h) => h.room === R);
+  await closeAll([c]);
+
+  const clean = rotated.status < 300 && newCode !== oldCode
+    && stale.status === 403 && stale.body.error === 'invalid_pairing_code'
+    && fresh.status < 300 && fresh.body.role === 'guest'
+    && notOwner.status === 403 && notOwner.body.error === 'not_room_owner'
+    && refusedByHandshake && !pageArrived && joinAck?.ok === false && joinAck.error === 'room_is_full';
+  record('T18', 'code rotation and socket-path admission across instances',
+    clean ? 'PASS' : 'FAIL',
+    { rotate: { status: rotated.status, changed: newCode !== oldCode },
+      staleCodeOnPeer: { status: stale.status, error: stale.body.error },
+      freshCodeOnPeer: { status: fresh.status, role: fresh.body.role },
+      rotateByNonOwner: { status: notOwner.status, error: notOwner.body.error },
+      handshakeFullRoom: { refusedByHandshake, historyPageArrived: pageArrived, roomJoinAck: joinAck },
+      verdict: clean
+        ? 'the retired code is dead on the replica that never saw the rotation, only the owner can hand one out, and a socket reaching a full room is refused with a reason instead of silently given a page'
+        : `roster rules are not holding on every path: ${JSON.stringify({ stale: stale.body, fresh: fresh.body, notOwner: notOwner.body, joinAck })}` });
+}
+
+const suites = { t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18 };
 
 const chosen = SUITE === 'all' ? Object.keys(suites) : SUITE.split(',');
 for (const key of chosen) {

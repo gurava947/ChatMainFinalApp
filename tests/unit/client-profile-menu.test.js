@@ -56,6 +56,19 @@ describe('guest session storage', () => {
     expect(roomChat.readGuest().sessionToken).toBe(session.sessionToken);
   });
 
+  test('a minted session is only handed back, never stored, so a refused join cannot change who this device is', async () => {
+    roomChat.saveGuest(session);
+    const minted = { ...session, userId: 'b0000000-0000-4000-8000-000000000002', displayName: 'Cleo', sessionToken: 'C'.repeat(43) };
+    window.__fetchResponse = () => Promise.resolve(jsonResponse(minted, 201));
+
+    const fresh = await roomChat.resolveGuest('Cleo');
+
+    expect(fresh).toEqual(minted);
+    // resolveGuest alone is not a commitment; joinRoom stores it once the room says yes.
+    expect(roomChat.readGuest()).toEqual(session);
+    expect(localStorage.getItem('chat:displayName')).toBe(session.displayName);
+  });
+
   test('clearGuest removes every trace of the session so sign out is real', () => {
     roomChat.saveGuest(session);
     roomChat.clearGuest();

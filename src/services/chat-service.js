@@ -14,6 +14,9 @@ const {
   USERNAME_MAX,
   HISTORY_PAGE_SIZE,
   HISTORY_PAGE_MAX,
+  ROOM_MAX_MEMBERS,
+  INVITE_CODE_ALPHABET,
+  INVITE_CODE_LENGTH,
   userRoom,
   isSelfRoom,
   selfRoomOwner
@@ -23,6 +26,31 @@ const { safeDisplayName } = require('../utils/media');
 
 /** How long a live fan-out may reuse a viewer's block list. */
 const BLOCK_CACHE_TTL_MS = 2000;
+
+/**
+ * A roster write is a compare-and-set, so a conflict means another join landed
+ * first and the answer has to be recomputed from the new roster. Four reads is
+ * generous for a two-seat room, and the loop ending is a real signal rather
+ * than a silent give-up: it means the room is being hammered.
+ */
+const ROSTER_CAS_ATTEMPTS = 4;
+
+/**
+ * `crypto.randomInt` bounds each draw, so every symbol is exactly as likely as
+ * the next; indexing a random byte by modulo would not be.
+ */
+function randomInviteCode() {
+  let code = '';
+  for (let i = 0; i < INVITE_CODE_LENGTH; i += 1) {
+    code += INVITE_CODE_ALPHABET[crypto.randomInt(INVITE_CODE_ALPHABET.length)];
+  }
+  return code;
+}
+
+/** A code read aloud or typed on a phone arrives with spacing and case noise. */
+function normalizeInviteCode(value) {
+  return value.trim().replace(/[\s-]/g, '').toUpperCase();
+}
 
 class ChatService {
   constructor({ store, io, logger, config }) {
@@ -81,56 +109,159 @@ class ChatService {
     return Boolean(await this.authenticateSession(userId, socket.handshake.auth && socket.handshake.auth.sessionToken));
   }
 
+  /**
+   * A seat on the roster is the only claim on a room. There is no path left
+   * from "knows the room id" to "reads the room", which is what the previous
+   * rule - open unless a password had been set - actually meant.
+   */
   async hasRoomAccess(user, room) {
     const owner = selfRoomOwner(room);
     if (owner) return owner === user.userId;
-    if (!await this.store.getRoomPassword(room)) {
-      return (await this.store.recentMessages(room, 1)).length > 0;
-    }
-    return this.store.hasRoomAccess(room, user.userId);
+    const roster = await this.store.getRoomRoster(room);
+    if (!roster) return false;
+    return roster.owner === user.userId || roster.guest === user.userId;
   }
 
   /**
-   * Legacy rooms with history stay open. The first guest to enter a new,
-   * empty room sets its shared password; later joins must match it exactly.
+   * Every entry point that can admit a member runs through here: the HTTP room
+   * access route, the socket handshake auto-join, and the `room:join` event.
+   *
+   * An empty roster is claimed by the first member, who becomes the owner and
+   * is handed the pairing code once. The next member may take the free seat
+   * only by producing that code, and a third is refused - the cap is a property
+   * of the write, so no join path can walk around it by omitting a field.
    */
-  async authorizeRoom(user, room, password) {
+  async authorizeRoom(user, room, credential) {
     const owner = selfRoomOwner(room);
     if (owner) {
       if (owner !== user.userId) throw this.roomAccessError('not_your_room', 403);
-      return { legacy: false };
+      return { role: 'owner' };
     }
 
-    let record = await this.store.getRoomPassword(room);
-    if (record) {
-      if (!await this.store.hasRoomAccess(room, user.userId)) {
-        const valid = await this.verifyRoomPassword(password, record);
-        if (!valid) throw this.roomAccessError(password ? 'invalid_password' : 'room_password_required', 403);
-        await this.store.grantRoomAccess(room, user.userId);
+    for (let attempt = 0; attempt < ROSTER_CAS_ATTEMPTS; attempt += 1) {
+      const roster = await this.store.getRoomRoster(room);
+      if (!roster) {
+        const claimed = await this.claimRoom(user, room);
+        // null means a concurrent joiner wrote the roster between the read and
+        // the NX set; re-reading their answer is the only correct next step.
+        if (claimed) return claimed;
+        continue;
       }
-      return { legacy: false };
-    }
-
-    if ((await this.store.recentMessages(room, 1)).length) return { legacy: true };
-    if (!password) throw this.roomAccessError('password_required', 400);
-
-    record = await this.hashRoomPassword(password);
-    if (!await this.store.setRoomPasswordIfAbsent(room, record)) {
-      const current = await this.store.getRoomPassword(room);
-      if (!current || !await this.verifyRoomPassword(password, current)) {
-        throw this.roomAccessError('invalid_password', 403);
+      if (roster.owner === user.userId) return { role: 'owner', legacy: Boolean(roster.migrated) };
+      if (roster.guest === user.userId) return { role: 'guest' };
+      if (this.isRoomFull(roster)) throw this.roomAccessError('room_is_full', 403);
+      if (!credential) throw this.roomAccessError('pairing_code_required', 403);
+      if (!await this.verifyCredential(credential, roster)) {
+        throw this.roomAccessError('invalid_pairing_code', 403);
       }
+      const next = {
+        ...roster,
+        guest: user.userId,
+        version: roster.version + 1,
+        updatedAt: Date.now()
+      };
+      const written = await this.store.replaceRoomRoster(room, next, roster.version);
+      if (written === 'ok') return { role: 'guest' };
+      // 'conflict' or 'absent': somebody else moved the roster while this
+      // request was open, so the seat may already be gone. Looping re-reads it
+      // instead of answering from a snapshot that is no longer true.
     }
-    await this.store.grantRoomAccess(room, user.userId);
-    return { legacy: false };
+    throw this.roomAccessError('room_busy', 409);
+  }
+
+  /**
+   * A room that predates the roster is claimed by the first member to re-enter
+   * it. That is not a downgrade: the room was readable by anyone who had its id
+   * before, and from here on it needs a code as well. A room that had a shared
+   * password keeps accepting it for the free seat, so the member who never saw
+   * the migration is not locked out of a conversation they were already in.
+   */
+  async claimRoom(user, room) {
+    const inviteCode = randomInviteCode();
+    const legacySecret = await this.store.getRoomPassword(room);
+    const roster = {
+      room,
+      owner: user.userId,
+      guest: null,
+      invite: await this.hashSecret(inviteCode),
+      version: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      ...(legacySecret ? { legacySecret } : {}),
+      migrated: Boolean(legacySecret) || (await this.store.recentMessages(room, 1)).length > 0
+    };
+    if (!await this.store.createRoomRoster(room, roster)) return null;
+    return { role: 'owner', inviteCode, legacy: roster.migrated };
+  }
+
+  /** Rotating drops a leaked code, and with it the old shared password. */
+  async rotateRoomInvite(user, room) {
+    for (let attempt = 0; attempt < ROSTER_CAS_ATTEMPTS; attempt += 1) {
+      const roster = await this.store.getRoomRoster(room);
+      if (!roster) throw this.roomAccessError('room_not_created', 404);
+      if (roster.owner !== user.userId) throw this.roomAccessError('not_room_owner', 403);
+      const inviteCode = randomInviteCode();
+      const next = { ...roster };
+      delete next.legacySecret;
+      const written = await this.store.replaceRoomRoster(
+        room,
+        { ...next, invite: await this.hashSecret(inviteCode), version: roster.version + 1, updatedAt: Date.now() },
+        roster.version
+      );
+      if (written === 'ok') return { inviteCode };
+    }
+    throw this.roomAccessError('room_busy', 409);
+  }
+
+  isRoomFull(roster) {
+    return 1 + (roster.guest ? 1 : 0) >= ROOM_MAX_MEMBERS;
+  }
+
+  /**
+   * What a member may know about their own room. A non-member gets the same
+   * refusal they would get for reading the room's history, so nothing here is
+   * an oracle for which room ids are in use.
+   */
+  async roomRoster(user, room) {
+    const owner = selfRoomOwner(room);
+    if (owner) {
+      if (owner !== user.userId) throw this.roomAccessError('not_your_room', 403);
+      return { room, role: 'owner', members: [{ userId: owner, role: 'owner' }], seatsFull: true };
+    }
+    const roster = await this.store.getRoomRoster(room);
+    if (!roster || (roster.owner !== user.userId && roster.guest !== user.userId)) {
+      throw this.roomAccessError('not_a_member', 403);
+    }
+    const members = [{ userId: roster.owner, role: 'owner' }];
+    if (roster.guest) members.push({ userId: roster.guest, role: 'guest' });
+    return {
+      room,
+      role: roster.owner === user.userId ? 'owner' : 'guest',
+      members,
+      seatsFull: this.isRoomFull(roster),
+      migrated: Boolean(roster.migrated)
+    };
+  }
+
+  /**
+   * The code is compared case- and separator-insensitively because it is read
+   * out loud and typed on a phone; the legacy password is not, so the raw
+   * credential is tried for that record unchanged.
+   */
+  async verifyCredential(credential, roster) {
+    if (typeof credential !== 'string' || credential.length === 0) return false;
+    if (roster.invite && await this.verifySecret(normalizeInviteCode(credential), roster.invite)) return true;
+    return Boolean(roster.legacySecret) && await this.verifySecret(credential, roster.legacySecret);
   }
 
   async assertRoomAccess(user, room) {
     const owner = selfRoomOwner(room);
-    if (owner && owner !== user.userId) throw this.roomAccessError('not_your_room', 403);
-    if (owner) return true;
+    if (owner) {
+      if (owner !== user.userId) throw this.roomAccessError('not_your_room', 403);
+      return true;
+    }
     if (await this.hasRoomAccess(user, room)) return true;
-    throw this.roomAccessError('room_password_required', 403);
+    throw this.roomAccessError('not_a_member', 403);
   }
 
   roomAccessError(code, statusCode) {
@@ -140,15 +271,15 @@ class ChatService {
     return error;
   }
 
-  async hashRoomPassword(password) {
+  async hashSecret(secret) {
     const salt = crypto.randomBytes(16);
-    const hash = await scrypt(password, salt, 64);
+    const hash = await scrypt(secret, salt, 64);
     return { salt: salt.toString('hex'), hash: hash.toString('hex') };
   }
 
-  async verifyRoomPassword(password, record) {
-    if (typeof password !== 'string' || !/^[a-f\d]{32}$/i.test(record.salt) || !/^[a-f\d]{128}$/i.test(record.hash)) return false;
-    const actual = await scrypt(password, Buffer.from(record.salt, 'hex'), 64);
+  async verifySecret(secret, record) {
+    if (typeof secret !== 'string' || !/^[a-f\d]{32}$/i.test(record.salt) || !/^[a-f\d]{128}$/i.test(record.hash)) return false;
+    const actual = await scrypt(secret, Buffer.from(record.salt, 'hex'), 64);
     return crypto.timingSafeEqual(actual, Buffer.from(record.hash, 'hex'));
   }
 

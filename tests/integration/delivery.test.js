@@ -37,6 +37,7 @@ describe('delivery receipts', () => {
   test('a freshly sent message carries no delivery receipt', async () => {
     const aId = await sessionId('Ana');
     const bId = await sessionId('Ben');
+    await ctx.pairRoomForTest('fresh', [aId, bId]);
     const a = openSocket(ctx.url, aId, 'fresh');
     const b = openSocket(ctx.url, bId, 'fresh');
     await waitFor(b, 'presence', (p) => p.connections === 2);
@@ -54,6 +55,7 @@ describe('delivery receipts', () => {
   test('the recipient device reports delivery and the sender is notified', async () => {
     const aId = await sessionId('Ana');
     const bId = await sessionId('Ben');
+    await ctx.pairRoomForTest('receipt', [aId, bId]);
     const a = openSocket(ctx.url, aId, 'receipt');
     const b = openSocket(ctx.url, bId, 'receipt');
     await waitFor(b, 'presence', (p) => p.connections === 2);
@@ -79,6 +81,7 @@ describe('delivery receipts', () => {
   test('repeat reports from the same device are absorbed', async () => {
     const aId = await sessionId('Ana');
     const bId = await sessionId('Ben');
+    await ctx.pairRoomForTest('dupe', [aId, bId]);
     const a = openSocket(ctx.url, aId, 'dupe');
     const b = openSocket(ctx.url, bId, 'dupe');
     await waitFor(b, 'presence', (p) => p.connections === 2);
@@ -99,7 +102,7 @@ describe('delivery receipts', () => {
   test('opening history delivers other people messages to the reader', async () => {
     const authorId = await sessionId('Cleo');
     const latecomerId = await sessionId('Dev');
-    await ctx.authorizeRoomForTest(latecomerId, 'offline-send');
+    await ctx.pairRoomForTest('offline-send', [authorId, latecomerId]);
 
     const author = openSocket(ctx.url, authorId, 'offline-send');
     await waitFor(author, 'history');
@@ -138,6 +141,7 @@ describe('delivery receipts', () => {
   test('socket history delivery notifies the online sender too', async () => {
     const senderId = await sessionId('Fay');
     const readerId = await sessionId('Gus');
+    await ctx.pairRoomForTest('rejoin', [senderId, readerId]);
 
     const sender = openSocket(ctx.url, senderId, 'rejoin');
     await waitFor(sender, 'presence', (p) => p.connections === 1);
@@ -155,6 +159,7 @@ describe('delivery receipts', () => {
   test('a read receipt implies delivery for clients that never report it', async () => {
     const aId = await sessionId('Hal');
     const bId = await sessionId('Isla');
+    await ctx.pairRoomForTest('seen-only', [aId, bId]);
     const a = openSocket(ctx.url, aId, 'seen-only');
     const b = openSocket(ctx.url, bId, 'seen-only');
     await waitFor(b, 'presence', (p) => p.connections === 2);

@@ -123,7 +123,7 @@ class MemoryStore {
     this.roomSettings = new ExpiringMap(this.settingsTtl);
     this.blocked = new ExpiringMap(this.settingsTtl);
     this.roomPasswords = new ExpiringMap(retentionSeconds * 1000);
-    this.roomAccess = new ExpiringMap(retentionSeconds * 1000);
+    this.roomRosters = new ExpiringMap(retentionSeconds * 1000);
     this.calls = new Map();
     this.callIndex = new Map();
     this.statuses = new Map();
@@ -310,12 +310,32 @@ class MemoryStore {
     return this.roomPasswords.setIfAbsent(room, record);
   }
 
-  async hasRoomAccess(room, userId) {
-    return this.roomAccess.read(`${room}:${userId}`, { touch: true }) !== undefined;
+  /**
+   * Same contract as the Redis roster, including the copy: Redis hands back a
+   * freshly parsed object on every read, so returning the live object here
+   * would let a caller mutate the stored roster in place and then compare a
+   * version it had already changed.
+   */
+  async getRoomRoster(room) {
+    const roster = this.roomRosters.read(room, { touch: true });
+    return roster ? structuredClone(roster) : null;
   }
 
-  async grantRoomAccess(room, userId) {
-    this.roomAccess.set(`${room}:${userId}`, '1');
+  async createRoomRoster(room, roster) {
+    return this.roomRosters.setIfAbsent(room, structuredClone(roster));
+  }
+
+  /**
+   * No await sits between the version check and the write, which is what makes
+   * this the atomic compare-and-set its Redis script is; in a single-threaded
+   * process nothing can slip between the two statements.
+   */
+  async replaceRoomRoster(room, roster, expectedVersion) {
+    const current = this.roomRosters.read(room, { touch: true });
+    if (current === undefined) return 'absent';
+    if (current.version !== Number(expectedVersion)) return 'conflict';
+    this.roomRosters.set(room, structuredClone(roster));
+    return 'ok';
   }
 
   async saveMedia(record, { ttlSeconds } = {}) {

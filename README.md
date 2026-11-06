@@ -7,8 +7,10 @@ Nginx in front, containerised, autoscaled on Kubernetes, and delivered by a CI/C
 
 The supplied InChat React UI preserves the branded desktop/mobile layout and connects guest session
 creation, room history, presence, live messages, gallery/file uploads, location cards, voice notes and
-one-to-one audio/video calls to the room backend. It has no account login; new rooms use a shared room
-password, while existing rooms with history remain open.
+one-to-one audio/video calls to the room backend. It has no account login: a room holds at most two
+people — the guest who created it and one partner admitted with a pairing code — and every read, write
+and socket join is checked against that room's roster on the server. See
+[Rooms, seats and pairing codes](#rooms-seats-and-pairing-codes).
 The conversation UI also provides a fit-to-viewport image/video viewer with a minimize action, an audio
 waveform player with seeking, playback-speed and download controls, message search by content/type/date,
 calendar-day separators, and single-sent/double-delivered/double-read message ticks.
@@ -22,9 +24,11 @@ npm ci
 # Build the supplied InChat React UI into client/dist/:
 npm --prefix client ci
 npm run build:client
-# No Redis needed for a single-process guest-room run:
+# Only for a single-process run; the two-seat cap needs a shared store to mean anything:
 USE_MEMORY_STORE=true PORT=3000 npm start
-# open http://localhost:3000; new rooms ask for a shared password to give other guests.
+# open http://localhost:3000; the first guest to name a room owns it and is handed a pairing code
+# for the second seat. With one process the roster lives in memory, so use a real Redis before
+# running more than a single instance.
 # For UI development, run `CORS_ORIGIN=http://localhost:5173 USE_MEMORY_STORE=true PORT=3000 npm start`
 # in one terminal and `npm run dev:client` in another.
 
@@ -161,6 +165,10 @@ per file and `MEDIA_MAX_PER_MESSAGE` per message, and the declared MIME never ov
 | `GET /readyz` | readiness, checks the store | public |
 | `POST /api/sessions` | mints a public user id and session bearer token | rate limited |
 | `GET /api/sessions/:userId` | lets the authenticated client validate and reuse its identity | `X-Session-Id`, `X-Session-Token` |
+| `GET /api/rooms/:room/access` | does this session hold a seat? | session headers |
+| `POST /api/rooms/:room/access` | claims a room (no credential) or takes its free seat (with a pairing code) | session headers, pairing code, rate limited |
+| `GET /api/rooms/:room/roster` | the room's two seats, for a member | session headers, member only |
+| `POST /api/rooms/:room/invite` | replaces the pairing code, dropping any legacy shared password | session headers, owner only, rate limited |
 | `GET /api/rooms/:room/messages` | cached history | `X-Session-Id`, `X-Session-Token` |
 | `POST /api/rooms/:room/messages` | write path mirroring the socket | `X-Session-Id`, `X-Session-Token` |
 | `GET /api/rooms/:room/media` | attachment list behind Recents / Media / Folders | session headers, own self room only |
@@ -182,11 +190,55 @@ user-specific data remains attached to the old public id and is not transferred 
 Server→client: `new_message`, `history`, `presence`, `user_joined`, `user_left`, `typing`,
 `stop_typing`, `message_seen`, `poll_voted`, `call:incoming`, `call:accepted`, `call:declined`,
 `call:offer`, `call:answer`, `call:ice`, `call:end` and `system`. Handshake `auth` carries
-`{ userId, sessionToken, room }`.
+`{ userId, sessionToken, room, roomCredential? }`.
 
-Every `/api/rooms/:room/*` route runs `assertRoomAccess`, which is what keeps another user's
-`self-<uuid>` room unreadable and unwritable; the socket path adds its own `room mismatch` guard,
-because a socket may only write to the room it joined.
+Every `/api/rooms/:room/*` route runs `assertRoomAccess`, which reads the room's roster, and the socket
+path authorizes through the same roster at the handshake and on `room:join` — a socket is never trusted
+because it asked before its first packet. That is what keeps another user's `self-<uuid>` room
+unreadable and unwritable, and what refuses a third seat; the socket additionally enforces a
+`room mismatch` guard, because a socket may only write to the room it joined.
+
+## Rooms, seats and pairing codes
+
+A room's roster is its only membership record:
+
+```
+{ room, owner, guest, invite: { salt, hash }, version, createdAt, updatedAt, legacySecret?, migrated }
+```
+
+- **Two seats.** `ROOM_MAX_MEMBERS = 2`, counted as `owner` plus at most one `guest`. Both slots live in
+  one record, so the cap is a compare-and-set on `version` rather than a read-then-write two replicas
+  can both win. Concurrent claimants are retried `ROSTER_CAS_ATTEMPTS` times and the loser gets
+  `room_busy` (409) instead of a second seat.
+- **Pairing codes.** 8 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ` — no `0/O` or `1/I/L`, so a
+  code read off a screen survives being typed. The server stores only a scrypt hash with a per-room
+  salt, never the code. A code is shown exactly once, at the claim, and the owner re-mints it on demand
+  from the room's settings; nothing writes it to browser storage. Case and spacing are normalised before
+  hashing, so `qcye2y9j` and `QCYE 2Y9J` are the same invitation.
+- **Every entry point is the same door.** `POST /api/rooms/:room/access`, the socket handshake's
+  auto-join, and `room:join` all call `authorizeRoom`. Reads, writes, presence, receipts, calls and
+  status all call `assertRoomAccess`. There is no path that seats a user or serves a room's history
+  without consulting the roster.
+- **Rotation kills the old secret.** `POST /api/rooms/:room/invite` is owner-only, replaces the invite
+  hash, and drops `legacySecret` with it — a leaked code costs one click, not a new room.
+- **Migration.** A room that already has history, or a legacy shared password, is claimed by the first
+  guest to ask for it: they become the owner, `migrated` is set, and the old shared password is kept as
+  `legacySecret` so the *one* remaining seat can still be filled without a code nobody wrote down. The
+  answer carries `legacy: true` so the client can say so. Rotating the invite retires it. Rooms that
+  were previously open to anybody are no longer readable without a seat.
+- **Enumeration.** A room name cannot be probed for membership: `GET /api/rooms/:room/roster` answers
+  the same 403 `not_a_member` to a stranger that the room's history does, and only the two seats can
+  ask. What does leak is that *claiming* an unused name succeeds where claiming a name that is already
+  occupied by a full room returns `room_is_full` — that is inherent to owner-claims-a-new-room, and
+  `limiters.writes` bounds how fast anybody can walk it. Refusals distinguish `pairing_code_required`
+  from `invalid_pairing_code` because telling a partner "you forgot the code" versus "this room is
+  taken" is worth more than the one bit of information an attacker gains.
+- **The cap is only real on a shared store.** `USE_MEMORY_STORE=true` keeps each process its own roster,
+  so two replicas each hand out two seats and the limit silently doubles. Production must set
+  `REDIS_URL`; `/healthz` reports `sharedStore`, and the UI refuses to pretend otherwise.
+- **What this does not claim.** Nothing here is end-to-end encrypted. The server holds plaintext
+  message text, and pairing codes protect *access*, not content, from the operator. A room's
+  conversation is readable by whoever runs the backend.
 
 **Message shapes.** A message is `{ id, room, userId, displayName, text, ts, attachments[], content?,
 clientId }`, where `content` is one of:
@@ -379,11 +431,14 @@ of burning the retries.
 
 ## Chat settings (P2) — what "per viewer" means here
 
-Rooms have no roles: a room name and its shared password provide entry, but do not grant moderation
-privileges. New empty rooms require an 8–128 character password, stored as a salted scrypt hash; matching
-guests are authorized for the lifetime of their session. Existing rooms with message history and no
-password record remain open for compatibility. Password hashes and access grants are stored in Redis
-(or only in process memory with `USE_MEMORY_STORE=true`). The four settings a guest can change are stored
+Rooms have two roles and two seats: the guest who claimed the room is its `owner` and is the only one
+who can hand out or replace a pairing code, but that grants no moderation over the conversation itself.
+Neither role can delete or edit another guest's messages. Entry is a code from
+`23456789ABCDEFGHJKMNPQRSTUVWXYZ`, 8 characters, stored server-side only as a salted scrypt hash; a
+guest who presents it is seated for the lifetime of their session. A room with history or a legacy
+shared password is claimed by whoever asks for it first, and `GET /api/rooms/:room/roster` says who
+holds the seats. Rosters and access grants are stored in Redis (or only in process memory with
+`USE_MEMORY_STORE=true`). The four settings a guest can change are stored
 **per viewer** under `chat:roomsettings:<userId>:<room>` (plus `chat:blocked:<userId>`) and applied by the
 server, not by a client-side courtesy:
 
@@ -565,6 +620,6 @@ the first restart be the discovery.
 and size limits, nothing user-owned). Calling is WebRTC signalling relayed over sockets with STUN only -
 no TURN, so peers behind symmetric NAT cannot connect. The call log (P7) keeps the last 50 records for
 30 days, which is a history of *calls*, not a recording of them: nothing about the audio or video is
-stored. Guests are identified by an unguessable session UUID, not an account password. New rooms require
-their shared room password; existing passwordless rooms and the status feed remain accessible to guests
-on the deployment.
+stored. Guests are identified by an unguessable session UUID, not an account password. A room is reachable
+only by the two guests its roster names, over HTTPS/WSS in production; the status feed is the one surface
+that is deliberately shared across a guest's rooms rather than gated by a seat.

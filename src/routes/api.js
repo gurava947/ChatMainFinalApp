@@ -10,7 +10,7 @@ const {
   noteSchema,
   blockTargetSchema,
   roomThemeSchema,
-  roomPasswordSchema,
+  roomCredentialSchema,
   hideIdsSchema,
   historyQuerySchema,
   profileIdsSchema,
@@ -76,12 +76,44 @@ function apiRouter({ chat, store, limiters, media, logger, io }) {
     }
   });
 
+  /**
+   * Seat state for the member who asks, and nothing to anybody else: a
+   * non-member gets the same 403 they get for reading the room, so this cannot
+   * be used to survey which room ids are in use.
+   */
+  router.get('/rooms/:room/roster', guard, async (req, res, next) => {
+    try {
+      const room = parse(roomSchema, req.params.room);
+      return res.json(await chat.roomRoster(req.session, room));
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  /** The code is handed out once, at the claim, so the owner needs a way to get another. */
+  router.post('/rooms/:room/invite', guard, limiters.writes, async (req, res, next) => {
+    try {
+      const room = parse(roomSchema, req.params.room);
+      return res.json(await chat.rotateRoomInvite(req.session, room));
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   router.post('/rooms/:room/access', guard, limiters.writes, async (req, res, next) => {
     try {
       const room = parse(roomSchema, req.params.room);
-      const { password } = parse(roomPasswordSchema, req.body);
-      const result = await chat.authorizeRoom(req.session, room, password);
-      return res.json({ authorized: true, legacy: result.legacy });
+      const { credential } = parse(roomCredentialSchema, req.body);
+      const result = await chat.authorizeRoom(req.session, room, credential);
+      return res.json({
+        authorized: true,
+        role: result.role,
+        legacy: Boolean(result.legacy),
+        // Present exactly once, for the member who just claimed the room. The
+        // hash is on the server and a later join is refused without the code,
+        // so nobody else's response ever carries it.
+        inviteCode: result.inviteCode ?? null
+      });
     } catch (err) {
       return next(err);
     }

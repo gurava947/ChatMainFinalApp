@@ -94,9 +94,15 @@ const blockTargetSchema = z.object({
 
 /** A theme id becomes a class name in the browser, so only known ids pass. */
 const roomThemeSchema = z.object({ theme: z.enum(CHAT_THEMES) });
-const roomPasswordSchema = z.object({
-  password: z.string().min(8).max(128).optional()
-});
+/**
+ * One field covers both credentials a room accepts: a pairing code (8 symbols)
+ * and, for rooms that predate the roster, the shared password members already
+ * know. Both are secrets of at least 8 characters, so neither is a candidate
+ * for a guess, and the empty case is not "wrong secret" but "no secret offered"
+ * - which is why the field is optional rather than defaulted.
+ */
+const roomCredentialField = z.string().min(8).max(128).optional();
+const roomCredentialSchema = z.object({ credential: roomCredentialField });
 
 /** Message ids for delete-for-me, single tap or bulk selection. */
 const hideIdsSchema = z.object({
@@ -124,7 +130,7 @@ const joinPayloadSchema = z.object({
 });
 const roomJoinPayloadSchema = z.object({
   room: roomSchema,
-  password: z.string().min(8).max(128).optional()
+  credential: z.string().min(8).max(128).optional()
 });
 
 /**
@@ -337,7 +343,7 @@ module.exports = {
   noteSchema,
   blockTargetSchema,
   roomThemeSchema,
-  roomPasswordSchema,
+  roomCredentialSchema,
   hideIdsSchema,
   historyQuerySchema,
   profileIdsSchema,

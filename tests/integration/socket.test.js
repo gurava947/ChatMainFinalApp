@@ -9,6 +9,7 @@ const { createSession, rememberSession, sessionHeaders } = require('../helpers/s
 jest.setTimeout(30000);
 
 let ctx;
+let standupRooms = 0;
 
 async function sessionId(displayName) {
   return createSession(ctx.app, displayName);
@@ -61,15 +62,23 @@ describe('two-user room', () => {
   let b;
   let aId;
   let bId;
+  /**
+   * A room holds two members for the life of its roster, so each test pairs
+   * into its own room rather than trying to seat a third identity in the one
+   * the previous test left behind.
+   */
+  let space = 'standup';
 
   beforeEach(async () => {
     aId = await sessionId('Ana');
     bId = await sessionId('Ben');
+    space = `standup-${(standupRooms += 1)}`;
+    await ctx.pairRoomForTest(space, [aId, bId]);
 
-    a = openSocket(ctx.url, aId, 'standup');
+    a = openSocket(ctx.url, aId, space);
     await waitFor(a, 'presence', (p) => p.connections === 1);
 
-    b = openSocket(ctx.url, bId, 'standup');
+    b = openSocket(ctx.url, bId, space);
     await waitFor(b, 'presence', (p) => p.connections === 2);
   });
 
@@ -104,7 +113,7 @@ describe('two-user room', () => {
     expect(theirs.seq).toBe(ack.seq);
 
     const page = await request(ctx.app)
-      .get('/api/rooms/standup/messages')
+      .get(`/api/rooms/${space}/messages`)
       .set(sessionHeaders(bId))
       .expect(200);
     expect(page.body.messages.find((m) => m.id === ack.id).seq).toBe(ack.seq);
@@ -132,7 +141,7 @@ describe('two-user room', () => {
     expect(duplicates).toHaveLength(0);
 
     const history = await request(ctx.app)
-      .get('/api/rooms/standup/messages')
+      .get(`/api/rooms/${space}/messages`)
       .set(sessionHeaders(bId));
     const hydrated = history.body.messages.find((m) => m.id === sent.id);
     expect(hydrated.seenBy).toEqual([aId]);
@@ -252,8 +261,12 @@ describe('room switching', () => {
     const socket = openSocket(ctx.url, userId, 'first');
     await waitFor(socket, 'presence', (p) => p.connections === 1);
 
-    const ack = await emitWithAck(socket, 'room:join', { room: 'second', password: 'InChatTestPassword!' });
+    const ack = await emitWithAck(socket, 'room:join', { room: 'second' });
     expect(ack.ok).toBe(true);
+    // The socket join is a roster write like any other, so the member who
+    // claimed the room over the wire is handed the code to pair with.
+    expect(ack.role).toBe('owner');
+    expect(ack.inviteCode).toHaveLength(8);
 
     const history = await waitFor(socket, 'history', (p) => p.room === 'second');
     expect(history.messages).toEqual([]);
@@ -362,12 +375,16 @@ describe('events that arrive during the handshake join', () => {
   test('a message sent before the join finishes still gets its ack', async () => {
     const res = await request(slow.app).post('/api/sessions').send({ displayName: 'Rusher' });
     rememberSession(res.body);
+    // The room already has a member, so this join has to clear the roster with
+    // a pairing code before it reaches the presence write the test slows down.
+    const ownerId = await createSession(slow.app, 'First');
+    const { inviteCode } = await slow.seatForTest(ownerId, 'rushed');
     const socket = connect(slow.url, {
       auth: {
         userId: res.body.userId,
         sessionToken: res.body.sessionToken,
         room: 'rushed',
-        roomPassword: 'InChatTestPassword!'
+        roomCredential: inviteCode
       },
       transports: ['websocket'],
       forceNew: true

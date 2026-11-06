@@ -400,11 +400,28 @@ describe('store parity with the shared backend', () => {
     expect(await store.getRoomPassword('general')).toEqual(record);
   });
 
-  test('a room grant outlives the session that asked for it', async () => {
-    const store = buildStore({ sessionTtlSeconds: 1 });
-    await store.saveSession({ userId: 'u1', displayName: 'Ada', expiresAt: Date.now() + 60000 });
-    expect(await store.hasRoomAccess('general', 'u1')).toBe(false);
-    await store.grantRoomAccess('general', 'u1');
-    expect(await store.hasRoomAccess('general', 'u1')).toBe(true);
+  test('a roster is claimed once and replaced only at the version it was read at', async () => {
+    const store = buildStore();
+    const roster = { room: 'general', owner: 'u1', guest: null, version: 0 };
+    expect(await store.getRoomRoster('general')).toBeNull();
+    expect(await store.createRoomRoster('general', roster)).toBe(true);
+    expect(await store.createRoomRoster('general', { ...roster, owner: 'u2' })).toBe(false);
+    expect(await store.getRoomRoster('general')).toEqual(roster);
+
+    const seated = { ...roster, guest: 'u2', version: 1 };
+    expect(await store.replaceRoomRoster('general', seated, 0)).toBe('ok');
+    // The answer is 'conflict' rather than a silent overwrite: a request that
+    // read version 0 no longer knows who holds the second seat.
+    expect(await store.replaceRoomRoster('general', { ...roster, guest: 'u3', version: 1 }, 0)).toBe('conflict');
+    expect(await store.getRoomRoster('general')).toEqual(seated);
+    expect(await store.replaceRoomRoster('gone', roster, 0)).toBe('absent');
+  });
+
+  test('a roster read hands back a copy, so a caller cannot seat itself by mutation', async () => {
+    const store = buildStore();
+    await store.createRoomRoster('general', { room: 'general', owner: 'u1', guest: null, version: 0 });
+    const read = await store.getRoomRoster('general');
+    read.guest = 'someone-else';
+    expect(await store.getRoomRoster('general')).toEqual({ room: 'general', owner: 'u1', guest: null, version: 0 });
   });
 });

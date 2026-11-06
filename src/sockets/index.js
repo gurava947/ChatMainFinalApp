@@ -1,7 +1,7 @@
 'use strict';
 
 const { SOCKET_EVENTS, userRoom } = require('../constants');
-const { parse, joinPayloadSchema, roomJoinPayloadSchema, roomPasswordSchema, sendPayloadSchema, seenIdsSchema, deliveredIdsSchema, pollVoteSchema } = require('../utils/validate');
+const { parse, joinPayloadSchema, roomJoinPayloadSchema, roomCredentialSchema, sendPayloadSchema, seenIdsSchema, deliveredIdsSchema, pollVoteSchema } = require('../utils/validate');
 const { socketConnectGuard } = require('../middleware/rate-limit');
 const { isStoreDown } = require('../middleware/error-handler');
 const { registerCallEvents } = require('./calls');
@@ -89,10 +89,10 @@ function registerChatEvents(io, deps) {
     const requestedRoom = socket.handshake.auth && socket.handshake.auth.room;
     const setupJoin = async () => {
       const { room } = parse(joinPayloadSchema.partial().required({ room: true }), { room: requestedRoom });
-      if (typeof socket.handshake.auth.roomPassword === 'string') {
-        const { password } = parse(roomPasswordSchema, { password: socket.handshake.auth.roomPassword });
-        await chat.authorizeRoom(socket.data.user, room, password);
-      }
+      const { credential } = parse(roomCredentialSchema, { credential: socket.handshake.auth.roomCredential });
+      // The handshake is a join like any other, so it goes through the roster
+      // rather than being trusted because it arrived before the first packet.
+      await chat.authorizeRoom(socket.data.user, room, credential);
       // joinRoom broadcasts presence to the room, which already contains this
       // socket, so no separate emit is needed here.
       await chat.joinRoom(socket, room, socket.data.user);
@@ -109,17 +109,19 @@ function registerChatEvents(io, deps) {
 
     socket.on(SOCKET_EVENTS.ROOM_JOIN, async (payload, ack) => {
       try {
-        const { room, password } = parse(roomJoinPayloadSchema, payload);
+        const { room, credential } = parse(roomJoinPayloadSchema, payload);
         await joined;
-        if (password) await chat.authorizeRoom(socket.data.user, room, password);
-        else await chat.assertRoomAccess(socket.data.user, room);
+        // Authorised here rather than trusted from the HTTP call that usually
+        // precedes it: a socket can skip that call, and the roster is the only
+        // thing that says whether this user holds a seat.
+        const grant = await chat.authorizeRoom(socket.data.user, room, credential);
         if (socket.data.room) await chat.leaveRoom(socket);
         await chat.joinRoom(socket, room, socket.data.user);
         socket.emit(SOCKET_EVENTS.HISTORY, {
           room,
           messages: await chat.readHistory(room, socket.data.user, { limit: env.HISTORY_PAGE_SIZE })
         });
-        if (typeof ack === 'function') ack(ACK_OK({ room }));
+        if (typeof ack === 'function') ack(ACK_OK({ room, role: grant.role, inviteCode: grant.inviteCode ?? null }));
       } catch (err) {
         if (typeof ack === 'function') ack(ACK_FAILED(err));
       }

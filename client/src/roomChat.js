@@ -105,6 +105,13 @@ export function roomSummary(roomId) {
   }
 }
 
+/**
+ * Reuses the cached identity for a matching display name, otherwise mints a new
+ * one. A fresh session is deliberately NOT saved here: the only caller is the
+ * join flow, and a join that fails on the pairing code would otherwise leave
+ * this device holding a brand-new identity, a room list belonging to the old
+ * one, and a socket authenticated as a user the page never meant to become.
+ */
 export async function resolveGuest(displayName) {
   const name = displayName.trim()
   if (name.length < 2 || name.length > 32) throw new Error('Display name must be 2–32 characters.')
@@ -134,7 +141,6 @@ export async function resolveGuest(displayName) {
     if (result.error === 'rate_limited') throw new Error('Too many guest sessions were started. Wait a moment and try again.')
     throw new Error(result.message || 'Could not start a guest chat. Please try again.')
   }
-  saveGuest(result)
   return result
 }
 
@@ -181,9 +187,11 @@ async function settingsRequest(path, session, init = {}) {
   if (!response.ok) {
     const reason = typeof result.error === 'string' && result.error !== 'internal_error' ? result.error : null
     const messages = {
-      password_required: 'Set a room password with at least 8 characters.',
-      room_password_required: 'Enter the correct password for this room.',
-      invalid_password: 'That room password does not match.',
+      pairing_code_required: 'Enter the pairing code your partner shared with you.',
+      invalid_pairing_code: 'That pairing code does not match this room.',
+      room_is_full: 'Two people already hold this room. Start a new room for someone else.',
+      not_a_member: 'You are not a member of this room. Join it with its pairing code.',
+      not_room_owner: 'Only the person who created this room can change its pairing code.',
       not_your_room: "You cannot enter another guest's private room."
     }
     throw new Error(messages[reason] || reason || 'Could not change your chat settings. Please try again.')
@@ -198,12 +206,25 @@ export async function checkRoomAccess(session, room) {
   return Boolean(result.authorized)
 }
 
-export async function authorizeRoom(session, room, password = '') {
-  const result = await settingsRequest(roomPath(room, '/access'), session, {
+/**
+ * Claims a room (no code: you become its first member and are handed the code
+ * once) or pairs into one with the code a partner gave you. The answer is the
+ * server's, never guessed here, because the two-seat cap is a server rule.
+ */
+export async function authorizeRoom(session, room, credential = '') {
+  return settingsRequest(roomPath(room, '/access'), session, {
     method: 'POST',
-    body: JSON.stringify(password ? { password } : {})
+    body: JSON.stringify(credential ? { credential } : {})
   })
-  return result
+}
+
+export async function fetchRoomRoster(session, room) {
+  return settingsRequest(roomPath(room, '/roster'), session)
+}
+
+/** A code that has been read out in a group chat is a code that needs replacing. */
+export async function rotateRoomInvite(session, room) {
+  return settingsRequest(roomPath(room, '/invite'), session, { method: 'POST', body: JSON.stringify({}) })
 }
 
 /** One round trip for everything the room needs to render this guest's view. */

@@ -143,6 +143,14 @@ class FakeClient {
     return [...(this.sets.get(key) || new Set())];
   }
 
+  /** Mirrors the roster script's three answers, missing key included. */
+  async roomRosterCas(key, value, expectedVersion, ttlSeconds) {
+    const raw = this.kv.get(key);
+    if (raw === undefined) return -1;
+    if (Number(JSON.parse(raw).version) !== Number(expectedVersion)) return 0;
+    return (await this.set(key, value, 'EX', ttlSeconds)) === 'OK' ? 1 : 0;
+  }
+
   async zadd(key, ...pairs) {
     const z = this.zsets.get(key) || new Map();
     this.zsets.set(key, z);
@@ -500,12 +508,25 @@ describe('shared-state reads', () => {
     expect(client.expires.get('chat:room-password:general')).toBe(2592000);
   });
 
-  test('a room grant outlives the session that asked for it', async () => {
+  test('the roster write is a compare-and-set against the version it was read at', async () => {
     const { client, store } = build();
-    expect(await store.hasRoomAccess('general', 'u1')).toBe(false);
-    await store.grantRoomAccess('general', 'u1');
-    expect(await store.hasRoomAccess('general', 'u1')).toBe(true);
-    expect(client.expires.get('chat:room-access:general:u1')).toBe(2592000);
+    const roster = { room: 'general', owner: 'u1', guest: null, version: 0 };
+    expect(await store.createRoomRoster('general', roster)).toBe(true);
+    expect(await store.createRoomRoster('general', { ...roster, owner: 'u2' })).toBe(false);
+    expect(await store.replaceRoomRoster('general', { ...roster, guest: 'u2', version: 1 }, 0)).toBe('ok');
+    expect(await store.replaceRoomRoster('general', { ...roster, guest: 'u3', version: 1 }, 0)).toBe('conflict');
+    expect(await store.replaceRoomRoster('gone', roster, 0)).toBe('absent');
+    expect(await store.getRoomRoster('general')).toEqual({ ...roster, guest: 'u2', version: 1 });
+    expect(client.scripts.roomRosterCas).toBeDefined();
+    expect(client.expires.get('chat:room-roster:general')).toBe(2592000);
+  });
+
+  test('a roster read refreshes the key rather than leaving it undying', async () => {
+    const { client, store } = build();
+    await store.createRoomRoster('general', { room: 'general', owner: 'u1', guest: null, version: 0 });
+    client.expires.delete('chat:room-roster:general');
+    await store.getRoomRoster('general');
+    expect(client.expires.get('chat:room-roster:general')).toBe(2592000);
   });
 });
 

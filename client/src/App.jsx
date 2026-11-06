@@ -4,14 +4,13 @@ import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-d
 import {
   AlertCircle, ArrowDownLeft, ArrowLeft, ArrowUpRight, Ban, Bell, CalendarDays, Check, CheckCheck, ChevronLeft,
   ChevronRight, CircleUserRound, Clock3, Download, Ellipsis, Eye, FileText, Image, ListChecks, MapPin, Maximize2,
-  Menu, MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, Search, Send,
-  Settings2, Sparkles, Square, Sun, Trash2, Video, VideoOff, X,
+  Menu, MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, Search, Send, Settings2, Sparkles, Square, Sun, Trash2, Users, Video, VideoOff, X,
 } from 'lucide-react'
 import {
   authorizeRoom, blockGuest, CHAT_THEMES, checkRoomAccess, clearCallHistory, clearChatForMe, clearGuest, connectFeed, connectRoom, deleteChatForMe,
   deleteMessagesForMe, deleteStatus, fetchCallHistory, fetchChatSettings, fetchMyProfile, fetchProfiles,
-  fetchRoomMessages, fetchStatuses, fetchStatusViewers, forgetRoom, markStatusSeen, normalizeRoomName, postMediaStatus,
-  postTextStatus, readGuest, readRooms, removeAvatar, resolveGuest, roomSummary, saveGuest, saveNote, saveRoomTheme,
+  fetchRoomMessages, fetchRoomRoster, fetchStatuses, fetchStatusViewers, forgetRoom, markStatusSeen, normalizeRoomName, postMediaStatus,
+  postTextStatus, readGuest, readRooms, removeAvatar, resolveGuest, roomSummary, rotateRoomInvite, saveGuest, saveNote, saveRoomTheme,
   saveRooms, sessionHeaders, unblockGuest, uploadAvatar, uploadStatusMedia,
 } from './roomChat'
 import {
@@ -837,7 +836,110 @@ function formatRelative(timestamp) {
  * session id, so a reload — or another device signed in as the same guest —
  * comes back with the same block list, palette and cleared watermark.
  */
-function ChatSettingsSheet({ chat, session, settings, onClose, onSettingsChange, onHistoryRefresh, onChatDeleted }) {  const [pending, setPending] = useState('')
+/**
+ * Two seats and one code.
+ *
+ * The code is minted on request and never kept: what is on the screen can be
+ * replaced, so a code read over somebody's shoulder costs one click rather than
+ * a new room. The names come from the profile lookup and fall back to the
+ * session id, because a partner may never have set a display name.
+ */
+function PairingSection({ chat, session }) {
+  const [roster, setRoster] = useState(null)
+  const [partner, setPartner] = useState(null)
+  const [code, setCode] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [status, setStatus] = useState('')
+  const [pending, setPending] = useState(false)
+
+  const load = useCallback(async () => {
+    setPending(true)
+    try {
+      const loaded = await fetchRoomRoster(session, chat.id)
+      setRoster(loaded)
+      const other = loaded.members.find((member) => member.userId !== session.userId)
+      setPartner(other ? (await fetchProfiles(session, [other.userId]))[other.userId] || other : null)
+    } catch (error) {
+      setStatus(error.message)
+    } finally {
+      setPending(false)
+    }
+  }, [chat.id, session])
+
+  useEffect(() => {
+    setCode('')
+    setStatus('')
+    load()
+  }, [load])
+
+  const mint = async () => {
+    setPending(true)
+    setStatus('')
+    try {
+      const next = await rotateRoomInvite(session, chat.id)
+      setCode(next.inviteCode)
+      setCopied(false)
+      await load()
+    } catch (error) {
+      setStatus(error.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+    } catch {
+      setStatus('This browser will not hand the code to the clipboard. Read it out instead.')
+    }
+  }
+
+  const seatLabel = (member) => {
+    if (member.userId === session.userId) return 'You'
+    return partner?.userId === member.userId && partner.displayName ? partner.displayName : `Guest ${member.userId.slice(0, 8)}`
+  }
+
+  const seatNote = (member) => (member.role === 'owner' ? 'Created this room' : 'Paired with a code')
+
+  return (
+    <>
+      <h3 className="settings-group-title"><Users size={15} /> People</h3>
+      {roster ? (
+        <ul className="blocked-list">
+          {roster.members.map((member) => (
+            <li key={member.userId}>
+              <div><strong>{seatLabel(member)}</strong><small>{seatNote(member)}</small></div>
+            </li>
+          ))}
+          {!roster.seatsFull && (
+            <li>
+              <div><strong>Second seat</strong><small>Free — one more person can join with a code.</small></div>
+              {roster.role === 'owner' && <button type="button" className="btn" onClick={mint} disabled={pending}>{code ? 'New code' : 'Give a code'}</button>}
+            </li>
+          )}
+        </ul>
+      ) : <p className="settings-empty">Loading who is in this room…</p>}
+      {code && (
+        <div className="pairing-code">
+          <code>{code}</code>
+          <button type="button" className="btn" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+        </div>
+      )}
+      {roster?.role === 'owner' && roster.seatsFull && (
+        <button type="button" className="btn" onClick={mint} disabled={pending}>
+          {pending ? 'Making a new code…' : 'New pairing code'}
+        </button>
+      )}
+      <p className="settings-note">A room holds two people, and only its owner can hand out a code. A new code stops the old one working, so share it in person or over a channel you already trust.</p>
+      {status && <p className="settings-status" role="status">{status}</p>}
+    </>
+  )
+}
+
+function ChatSettingsSheet({ chat, session, settings, onClose, onSettingsChange, onHistoryRefresh, onChatDeleted }) {
+  const [pending, setPending] = useState('')
   const [status, setStatus] = useState('')
   const [confirming, setConfirming] = useState('')
   const [hd, setHd] = useState(readHdPreference)
@@ -915,7 +1017,10 @@ function ChatSettingsSheet({ chat, session, settings, onClose, onSettingsChange,
           ))}
         </div>
 
+        <PairingSection chat={chat} session={session} />
+
         <h3 className="settings-group-title"><Image size={15} /> Outgoing media</h3>
+
         <label className="settings-switch-row">
           <span>
             <strong>Send in HD</strong>
@@ -1607,7 +1712,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
             </button>
           </div>
         )}
-        {!visibleMessages.length && connection === 'Connected' && <div className="room-first-message"><MessageCircle size={25} /><strong>{chatSettings.clearedAt ? 'Your history here is cleared' : 'This room is ready'}</strong><span>Say hello to everyone who joins <b>#{chat.id}</b>.</span></div>}
+        {!visibleMessages.length && connection === 'Connected' && <div className="room-first-message"><MessageCircle size={25} /><strong>{chatSettings.clearedAt ? 'Your history here is cleared' : 'This room is ready'}</strong><span>Say hello to whoever holds the other seat in <b>#{chat.id}</b>.</span></div>}
         {searchIsActive && displayedMessages.length === 0 && <div className="message-search-empty"><Search size={20} /><strong>No matching messages</strong><span>Try another word, type or date range.</span></div>}
         {displayedMessages.map((message, index) => {
           const previous = displayedMessages[index - 1]
@@ -1824,7 +1929,7 @@ function CallWindow({ calls, chat }) {
 function JoinRoomDialog({ initialRoom, initialName, onClose, onJoin }) {
   const [displayName, setDisplayName] = useState(initialName || '')
   const [roomName, setRoomName] = useState(initialRoom || '')
-  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
   useBackDismiss(true, onClose)
@@ -1834,7 +1939,7 @@ function JoinRoomDialog({ initialRoom, initialName, onClose, onJoin }) {
     setPending(true)
     setError('')
     try {
-      await onJoin(displayName, roomName, password)
+      await onJoin(displayName, roomName, code)
     } catch (reason) {
       setError(reason.message || 'Could not join this room.')
       setPending(false)
@@ -1848,13 +1953,13 @@ function JoinRoomDialog({ initialRoom, initialName, onClose, onJoin }) {
         <div className="room-modal-icon"><MessageCircle size={22} /></div>
         <p className="eyebrow">ROOM CHAT</p>
         <h2 id="room-modal-title">Create or join a room</h2>
-        <p className="room-modal-copy">New rooms need a shared password. Existing rooms without a password remain open.</p>
+        <p className="room-modal-copy">A room holds two people. Leaving the code empty makes you the owner of a new room; typing somebody&rsquo;s code takes the free seat in a room they created. A new owner hands the code out from <strong>People</strong> in the room&rsquo;s settings.</p>
         <form className="room-modal-form" onSubmit={submit}>
           <label className="field"><span>Display name</span><input className="input" required minLength={2} maxLength={32} autoComplete="nickname" placeholder="e.g. Asha" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
           <label className="field"><span>Room name</span><input className="input" required minLength={1} maxLength={64} autoComplete="off" placeholder="e.g. design-team" value={roomName} onChange={(event) => setRoomName(event.target.value)} /></label>
           <small className="room-name-hint">Letters, numbers, dots, dashes and underscores. Spaces turn into dashes.</small>
-          <label className="field"><span>Room password</span><input className="input" type="password" minLength={8} maxLength={128} autoComplete="current-password" placeholder="Set one for a new room, or enter the existing password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-          <small className="room-name-hint">At least 8 characters. Use the same password as other room members.</small>
+          <label className="field"><span>Pairing code</span><input className="input code-input" minLength={8} maxLength={128} autoComplete="off" spellCheck={false} placeholder="Only for a room someone else created" value={code} onChange={(event) => setCode(event.target.value)} /></label>
+          <small className="room-name-hint">Eight characters, no spaces needed. Leave it empty to start your own room.</small>
           {error && <p className="room-form-error" role="alert">{error}</p>}
           <button className="btn btn-primary room-submit" type="submit" disabled={pending}>{pending ? 'Connecting…' : 'Enter room'}<ChevronRight size={17} /></button>
         </form>
@@ -1922,8 +2027,8 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRemove
     }
     setActiveChat(chat)
   }
-  const joinFromDialog = async (displayName, roomInput, password) => {
-    const chat = await onJoinRoom(displayName, roomInput, password)
+  const joinFromDialog = async (displayName, roomInput, code) => {
+    const chat = await onJoinRoom(displayName, roomInput, code)
     setActiveChat(chat)
     setJoinDialog(null)
   }
@@ -1953,7 +2058,7 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRemove
           <ChatList chats={filtered} activeId={activeChat?.id} onSelect={openRoom} onCreate={() => setJoinDialog('')} hasQuery={Boolean(query)} />
         </section>
         {activeChat && <div className="split-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize rooms and chat panels" aria-valuemin={340} aria-valuemax={Math.round(maxInboxWidth)} aria-valuenow={Math.round(currentInboxWidth)} aria-valuetext={`${Math.round(currentInboxWidth)} pixels for rooms`} tabIndex={0} onPointerDown={handleResizePointerDown} onPointerMove={handleResizePointerMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onKeyDown={handleResizeKeyDown} onDoubleClick={() => setInboxPaneWidth(null)} />}
-        {activeChat && guest ? <ChatPreview key={`${activeChat.id}:${guest.userId}`} chat={activeChat} session={guest} onClose={() => setActiveChat(null)} onLatestMessage={onLatestMessage} onChatRemoved={(roomId) => { setActiveChat(null); onRoomRemoved(roomId) }} autoCall={roomRequest?.call || null} onAutoCallHandled={() => onRoomRequestHandled?.()} /> : <section className="welcome-card"><div className="welcome-orb"><MessageCircle size={30} /></div><p className="eyebrow">A LITTLE NOTE</p><h2>Make space for<br /><em>good conversations.</em></h2><p>Create a room or join one by name. Share its name with your group and your messages appear here in real time.</p><button type="button" className="welcome-create-button" onClick={() => setJoinDialog('')}><Plus size={16} /> Create or join a room</button><div className="welcome-stats"><span><strong>{rooms.length.toString().padStart(2, '0')}</strong><small>rooms on this device</small></span><span><strong>Live</strong><small>room messages</small></span></div></section>}
+        {activeChat && guest ? <ChatPreview key={`${activeChat.id}:${guest.userId}`} chat={activeChat} session={guest} onClose={() => setActiveChat(null)} onLatestMessage={onLatestMessage} onChatRemoved={(roomId) => { setActiveChat(null); onRoomRemoved(roomId) }} autoCall={roomRequest?.call || null} onAutoCallHandled={() => onRoomRequestHandled?.()} /> : <section className="welcome-card"><div className="welcome-orb"><MessageCircle size={30} /></div><p className="eyebrow">A LITTLE NOTE</p><h2>Make space for<br /><em>good conversations.</em></h2><p>Create a room, or join one with the pairing code its owner hands you. A room holds two people, and your messages appear here in real time.</p><button type="button" className="welcome-create-button" onClick={() => setJoinDialog('')}><Plus size={16} /> Create or join a room</button><div className="welcome-stats"><span><strong>{rooms.length.toString().padStart(2, '0')}</strong><small>rooms on this device</small></span><span><strong>Live</strong><small>room messages</small></span></div></section>}
       </div>
       {joinDialog !== null && <JoinRoomDialog key={joinDialog || 'new-room'} initialRoom={joinDialog} initialName={guest?.displayName} onClose={() => setJoinDialog(null)} onJoin={joinFromDialog} />}
     </main>
@@ -2546,10 +2651,10 @@ function App() {
     return () => { active = false }
   }, [guest?.userId])
 
-  const joinRoom = async (displayName, roomInput, password) => {
+  const joinRoom = async (displayName, roomInput, code) => {
     const room = normalizeRoomName(roomInput)
     const session = await resolveGuest(displayName)
-    await authorizeRoom(session, room, password)
+    await authorizeRoom(session, room, code)
     setGuest(session)
     saveGuest(session)
     localStorage.setItem('chat:room', room)
@@ -2589,7 +2694,7 @@ function App() {
     if (!guest) return
     try {
       if (!await checkRoomAccess(guest, roomId)) {
-        returnToFeed('Open this room from Chats and enter its password first.')
+        returnToFeed('This device is not in that room yet. Join it with its pairing code from Chats.')
         return
       }
     } catch (error) {

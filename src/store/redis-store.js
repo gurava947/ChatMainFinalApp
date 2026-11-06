@@ -15,7 +15,7 @@ const {
   noteKey,
   roomSettingsKey,
   roomPasswordKey,
-  roomAccessKey,
+  roomRosterKey,
   blockedKey,
   avatarKey,
   callRecordKey,
@@ -53,6 +53,27 @@ redis.call('EXPIRE', KEYS[1], ARGV[2])
 return added
 `;
 
+/**
+ * Compare-and-set for a room roster. Two guests can reach an empty seat at the
+ * same instant from two replicas, and the loser must be told the seat is full
+ * rather than quietly overwrite the winner - which is why the write happens
+ * here, behind a version check, and not in application code.
+ *
+ * Returns 1 when the roster was replaced, 0 when somebody wrote it first, and
+ * -1 when there is no roster to compare against any more.
+ */
+const ROOM_ROSTER_CAS = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+  return -1
+end
+if tonumber(cjson.decode(raw).version) ~= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[3]))
+return 1
+`;
+
 class RedisStore {
   constructor(client, {
     messageCacheSize,
@@ -85,6 +106,7 @@ class RedisStore {
 
     client.defineCommand('incrWithTtl', { numberOfKeys: 1, lua: INCR_WITH_TTL });
     client.defineCommand('saddWithTtl', { numberOfKeys: 1, lua: SADD_WITH_TTL });
+    client.defineCommand('roomRosterCas', { numberOfKeys: 1, lua: ROOM_ROSTER_CAS });
   }
 
   async ping() {
@@ -279,20 +301,46 @@ class RedisStore {
   }
 
   /**
-   * A grant lives as long as the room, not as long as the session that asked
-   * for it: the old per-session expiry revoked a member's access on a token
-   * refresh, while the in-memory store never expired one at all. Both stores
-   * now use the room's own retention, refreshed when it is used.
+   * The roster is the room's whole authorization: whoever holds a seat may
+   * read the room and nobody else does. It replaces the older per-user grant
+   * keys, which grew one key per joiner and so had no way to express a limit.
    */
-  async hasRoomAccess(room, userId) {
-    const key = roomAccessKey(room, userId);
-    if ((await this.client.exists(key)) === 0) return false;
+  async getRoomRoster(room) {
+    const key = roomRosterKey(room);
+    const raw = await this.client.get(key);
+    if (!raw) return null;
+    let roster;
+    try {
+      roster = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    // Read-with-touch, so a room in use keeps its roster and an abandoned one
+    // forgets it exactly like its password record does.
     await this.client.expire(key, this.retention);
-    return true;
+    return roster;
   }
 
-  async grantRoomAccess(room, userId) {
-    await this.client.set(roomAccessKey(room, userId), '1', 'EX', this.retention);
+  /** The first writer claims the room; everyone after them is told it exists. */
+  async createRoomRoster(room, roster) {
+    return (await this.client.set(
+      roomRosterKey(room),
+      JSON.stringify(roster),
+      'EX',
+      this.retention,
+      'NX'
+    )) === 'OK';
+  }
+
+  async replaceRoomRoster(room, roster, expectedVersion) {
+    const written = await this.client.roomRosterCas(
+      roomRosterKey(room),
+      JSON.stringify(roster),
+      expectedVersion,
+      this.retention
+    );
+    if (written === 1) return 'ok';
+    return written === -1 ? 'absent' : 'conflict';
   }
 
   /** Returns true only for the first reader of a given message. */

@@ -91,9 +91,13 @@ function emitWithAck(socket, event, payload, timeoutMs = 8000) {
   });
 }
 
-function openSocket(url, userId, room) {
+/**
+ * A socket that already holds a seat needs no credential - the roster says so -
+ * so `credential` is only for the tests that join by pairing code.
+ */
+function openSocket(url, userId, room, credential) {
   return record(connect(url, {
-    auth: { userId, sessionToken: getSessionToken(userId), room, roomPassword: 'InChatTestPassword!' },
+    auth: { userId, sessionToken: getSessionToken(userId), room, roomCredential: credential },
     transports: ['websocket'],
     forceNew: true
   }));

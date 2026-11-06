@@ -10,9 +10,21 @@ const MEDIA_INDEX_NS = 'chat:media:index';
 const ROOM_SETTINGS_NS = 'chat:roomsettings';
 const BLOCKED_NS = 'chat:blocked';
 const ROOM_PASSWORD_NS = 'chat:room-password';
-const ROOM_ACCESS_NS = 'chat:room-access';
+const ROOM_ROSTER_NS = 'chat:room-roster';
 
 const ROOM_ID_MAX = 64;
+/**
+ * A room is a conversation between two people. The cap is enforced where
+ * membership is written, not where it is displayed, because a limit the client
+ * can walk around is not a limit.
+ */
+const ROOM_MAX_MEMBERS = 2;
+/**
+ * An invite is read out loud or typed on another device, so the alphabet drops
+ * the pairs people misread - no 0/O, no 1/I/L.
+ */
+const INVITE_CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const INVITE_CODE_LENGTH = 8;
 const USERNAME_MAX = 32;
 /** Long-form text is a first-class message, so the ceiling is a wall of text. */
 const MESSAGE_MAX_CHARS = 50000;
@@ -141,6 +153,9 @@ module.exports = {
   MEDIA_NS,
   MEDIA_INDEX_NS,
   ROOM_ID_MAX,
+  ROOM_MAX_MEMBERS,
+  INVITE_CODE_ALPHABET,
+  INVITE_CODE_LENGTH,
   USERNAME_MAX,
   MESSAGE_MAX_CHARS,
   PRESENCE_PRUNE_EVERY_MS,
@@ -188,7 +203,8 @@ module.exports = {
   roomSettingsKey: (userId, room) => `${ROOM_SETTINGS_NS}:${userId}:${room}`,
   blockedKey: (userId) => `${BLOCKED_NS}:${userId}`,
   roomPasswordKey: (room) => `${ROOM_PASSWORD_NS}:${room}`,
-  roomAccessKey: (room, userId) => `${ROOM_ACCESS_NS}:${room}:${userId}`,
+  /** The roster is the room's membership record, and the only thing authorization reads. */
+  roomRosterKey: (room) => `${ROOM_ROSTER_NS}:${room}`,
   avatarKey: (userId) => `chat:avatar:${userId}`,
   callRecordKey: (callId) => `chat:call:record:${callId}`,
   callUserKey: (userId) => `chat:call:user:${userId}`,

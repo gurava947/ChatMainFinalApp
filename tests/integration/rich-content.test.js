@@ -35,6 +35,7 @@ describe('structured messages on the wire', () => {
   test('a poll reaches the room as a ballot and a vote updates every reader', async () => {
     const author = await sessionId('Priya');
     const voter = await sessionId('Arjun');
+    await ctx.pairRoomForTest('weekend', [author, voter]);
     const a = openSocket(ctx.url, author, 'weekend');
     const b = openSocket(ctx.url, voter, 'weekend');
     await waitFor(b, 'history');
@@ -73,6 +74,7 @@ describe('structured messages on the wire', () => {
   test('re-voting replaces the earlier choice instead of adding to it', async () => {
     const author = await sessionId('Meera');
     const voter = await sessionId('Ravi');
+    await ctx.pairRoomForTest('revote', [author, voter]);
     const a = openSocket(ctx.url, author, 'revote');
     const b = openSocket(ctx.url, voter, 'revote');
     await waitFor(a, 'history');
@@ -94,6 +96,7 @@ describe('structured messages on the wire', () => {
   test('a single-choice poll refuses two options and an unknown option index', async () => {
     const author = await sessionId('Nila');
     const other = await sessionId('Vikram');
+    await ctx.pairRoomForTest('single', [author, other]);
     const a = openSocket(ctx.url, author, 'single');
     const b = openSocket(ctx.url, other, 'single');
     await waitFor(b, 'history');
@@ -135,8 +138,10 @@ describe('structured messages on the wire', () => {
 
   test('location, contact and event cards arrive with sanitised fields', async () => {
     const userId = await sessionId('Deepa');
+    const peerId = await sessionId('Imran');
+    await ctx.pairRoomForTest('cards', [userId, peerId]);
     const socket = openSocket(ctx.url, userId, 'cards');
-    const peer = openSocket(ctx.url, await sessionId('Imran'), 'cards');
+    const peer = openSocket(ctx.url, peerId, 'cards');
     await waitFor(peer, 'history');
 
     const location = await emitWithAck(socket, 'message', {
@@ -236,6 +241,7 @@ describe('idempotent sends', () => {
   test('a resend from a different user is a different message', async () => {
     const one = await sessionId('User One');
     const two = await sessionId('User Two');
+    await ctx.pairRoomForTest('sharedclient', [one, two]);
     const a = openSocket(ctx.url, one, 'sharedclient');
     const b = openSocket(ctx.url, two, 'sharedclient');
     await waitFor(b, 'history');

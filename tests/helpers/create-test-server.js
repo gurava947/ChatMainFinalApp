@@ -28,6 +28,8 @@ async function createTestServer(overrides = {}) {
   const io = new Server(server, { path: '/socket.io', cors: false });
 
   const uploadDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'groupchat-test-'));
+  /** room -> the pairing code its claim handed out, kept for the fixture's later joins. */
+  const roomInvites = new Map();
 
   const config = {
     instanceId: 'test-instance',
@@ -71,10 +73,26 @@ async function createTestServer(overrides = {}) {
     media,
     url,
     uploadDir,
-    async authorizeRoomForTest(userId, room, password = 'InChatTestPassword!') {
+    async authorizeRoomForTest(userId, room, credential) {
       const session = await chat.getSession(userId);
       if (!session) throw new Error(`test session ${userId} does not exist`);
-      return chat.authorizeRoom(session, room, password);
+      return chat.authorizeRoom(session, room, credential);
+    },
+    /**
+     * The roster is the only way into a room, so a test that needs members
+     * pairs them the way the product does: the first identity claims the room,
+     * and the code that claim returned is what every later identity in the same
+     * test enters with. A third identity is refused, which is the two-seat cap
+     * doing its job rather than a fixture being awkward - the room-access suite
+     * drives those refusals on purpose.
+     */
+    async seatForTest(userId, room) {
+      const result = await this.authorizeRoomForTest(userId, room, roomInvites.get(room));
+      if (result.inviteCode) roomInvites.set(room, result.inviteCode);
+      return result;
+    },
+    async pairRoomForTest(room, userIds) {
+      for (const userId of userIds) await this.seatForTest(userId, room);
     },
     async close() {
       stopHeartbeat();

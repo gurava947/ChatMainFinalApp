@@ -37,6 +37,7 @@ async function until(read, timeoutMs = 5000) {
 async function pair(room) {
   const callerId = await sessionId('Ana');
   const calleeId = await sessionId('Ben');
+  await ctx.pairRoomForTest(room, [callerId, calleeId]);
 
   const caller = openSocket(ctx.url, callerId, room);
   await waitFor(caller, 'presence', (p) => p.connections === 1);

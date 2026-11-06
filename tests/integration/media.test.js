@@ -156,7 +156,7 @@ describe('media download', () => {
 describe('attachments on messages', () => {
   test('accepts an attachment the sender uploaded', async () => {
     const userId = await session('Ada');
-    await ctx.authorizeRoomForTest(userId, 'launchpad');
+    await ctx.seatForTest(userId, 'launchpad');
     const uploaded = await upload(userId, { buffer: PNG_HEAD, name: 'shot.png', type: 'image/png' });
     const attached = uploaded.body.media[0];
 
@@ -179,8 +179,7 @@ describe('attachments on messages', () => {
   test('rejects an attachment id the sender does not own', async () => {
     const owner = await session('Owner');
     const thief = await session('Thief');
-    await ctx.authorizeRoomForTest(owner, 'private');
-    await ctx.authorizeRoomForTest(thief, 'private');
+    await ctx.pairRoomForTest('private', [owner, thief]);
     const uploaded = await upload(owner, { buffer: PNG_HEAD, name: 'mine.png', type: 'image/png' });
 
     const res = await request(ctx.app)
@@ -200,12 +199,12 @@ describe('attachments on messages', () => {
 
   test('an attachment with no caption is still a message', async () => {
     const userId = await session('Ada');
-    await ctx.authorizeRoomForTest(userId, 'launchpad');
+    await ctx.seatForTest(userId, 'silentpad');
     const uploaded = await upload(userId, { buffer: PNG_HEAD, name: 'silent.png', type: 'image/png' });
     const attached = uploaded.body.media[0];
 
     const res = await request(ctx.app)
-      .post('/api/rooms/launchpad/messages')
+      .post('/api/rooms/silentpad/messages')
       .set(sessionHeaders(userId))
       .send({
         attachments: [{
@@ -220,9 +219,9 @@ describe('attachments on messages', () => {
 
   test('a message with neither text nor attachment is rejected', async () => {
     const userId = await session('Ada');
-    await ctx.authorizeRoomForTest(userId, 'launchpad');
+    await ctx.seatForTest(userId, 'emptypad');
     const res = await request(ctx.app)
-      .post('/api/rooms/launchpad/messages')
+      .post('/api/rooms/emptypad/messages')
       .set(sessionHeaders(userId))
       .send({ text: '   ' });
     expect(res.status).toBe(400);

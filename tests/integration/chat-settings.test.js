@@ -23,7 +23,7 @@ async function sessionId(displayName) {
 const as = sessionHeaders;
 
 async function post(room, userId, text) {
-  await ctx.authorizeRoomForTest(userId, room);
+  await ctx.seatForTest(userId, room);
   const res = await request(ctx.app)
     .post(`/api/rooms/${room}/messages`)
     .set(as(userId))
@@ -33,14 +33,14 @@ async function post(room, userId, text) {
 }
 
 async function history(room, userId) {
-  await ctx.authorizeRoomForTest(userId, room);
+  await ctx.seatForTest(userId, room);
   const res = await request(ctx.app).get(`/api/rooms/${room}/messages`).set(as(userId));
   expect(res.status).toBe(200);
   return res.body.messages;
 }
 
 async function settings(room, userId) {
-  await ctx.authorizeRoomForTest(userId, room);
+  await ctx.seatForTest(userId, room);
   const res = await request(ctx.app).get(`/api/rooms/${room}/settings`).set(as(userId));
   expect(res.status).toBe(200);
   return res.body;
@@ -127,8 +127,7 @@ describe('chat settings are per viewer', () => {
   test('the theme is stored per viewer and only accepts known names', async () => {
     const ana = await sessionId('Ana');
     const ben = await sessionId('Ben');
-    await ctx.authorizeRoomForTest(ana, 'themed');
-    await ctx.authorizeRoomForTest(ben, 'themed');
+    await ctx.pairRoomForTest('themed', [ana, ben]);
 
     const saved = await request(ctx.app).put('/api/rooms/themed/settings/theme').set(as(ana)).send({ theme: 'forest' });
     expect(saved.status).toBe(200);
@@ -187,21 +186,20 @@ describe('chat settings are per viewer', () => {
   test('a blocked author is filtered on the wire, not only in history', async () => {
     const ana = await sessionId('Ana');
     const ben = await sessionId('Ben');
-    const cleo = await sessionId('Cleo');
+    await ctx.pairRoomForTest('liveblock', [ana, ben]);
     const anaSock = openSocket(ctx.url, ana, 'liveblock');
     const benSock = openSocket(ctx.url, ben, 'liveblock');
-    const cleoSock = openSocket(ctx.url, cleo, 'liveblock');
-    await waitFor(cleoSock, 'presence', (p) => p.connections === 3);
+    await waitFor(benSock, 'presence', (p) => p.connections === 2);
 
     await request(ctx.app).post('/api/me/blocks').set(as(ben)).send({ userId: ana, displayName: 'Ana' });
 
     await emitWithAck(anaSock, 'message', { room: 'liveblock', text: 'quiet please', clientId: crypto.randomUUID() });
-    await waitFor(cleoSock, 'new_message', (p) => p.text === 'quiet please');
+    await waitFor(anaSock, 'new_message', (p) => p.text === 'quiet please');
     await settle();
 
-    expect(received(cleoSock)).toContain('quiet please');
+    // Ana still gets her own row, which is what makes this a per-viewer filter
+    // rather than a room-wide suppression.
     expect(received(anaSock)).toContain('quiet please');
-    expect(received(benSock)).not.toContain('quiet please');
     expect(received(benSock)).toEqual([]);
 
     const unblock = await request(ctx.app).delete(`/api/me/blocks/${ana}`).set(as(ben));
@@ -213,24 +211,23 @@ describe('chat settings are per viewer', () => {
 
     anaSock.close();
     benSock.close();
-    cleoSock.close();
   });
 
-  test('a viewer earns no delivery receipt for content they hid from themselves', async () => {    const ana = await sessionId('Ana');
+  test('a viewer earns no delivery receipt for content they hid from themselves', async () => {
+    const ana = await sessionId('Ana');
     const ben = await sessionId('Ben');
-    const cleo = await sessionId('Cleo');
     const hiddenId = await post('receipts', ben, 'ana hid this');
     const keptId = await post('receipts', ben, 'ana still receives this');
 
-    await ctx.authorizeRoomForTest(ana, 'receipts');
+    await ctx.seatForTest(ana, 'receipts');
     await request(ctx.app).post('/api/rooms/receipts/messages/hide').set(as(ana)).send({ ids: [hiddenId] });
     const anaRows = await history('receipts', ana);
     expect(anaRows.map((m) => m.id)).toEqual([keptId]);
 
-    // Cleo saw both rows, so the receipts recorded on them show exactly which
-    // message Ana's device was allowed to receive.
-    const cleoRows = await history('receipts', cleo);
-    const rowFor = (id) => cleoRows.find((m) => m.id === id);
+    // Ben authored both rows, so his view carries the receipts as they stand:
+    // the row Ana read is credited to her and the row she hid is not.
+    const benRows = await history('receipts', ben);
+    const rowFor = (id) => benRows.find((m) => m.id === id);
     expect(rowFor(keptId).deliveredTo).toContain(ana);
     expect(rowFor(hiddenId).deliveredTo).not.toContain(ana);
   });
