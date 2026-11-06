@@ -62,6 +62,28 @@ const SHORTS_FEED_EXPORTS = [
 ];
 
 /**
+ * The IndexedDB layer. Its surface is long on purpose - every read and write the
+ * app performs goes through one of these names, so a test can assert on the same
+ * functions the browser runs instead of on a component tree.
+ */
+const LOCAL_STORE_EXPORTS = [
+  'DB_NAME', 'DB_VERSION', 'MIN_SEQ', 'MAX_SEQ', 'PINNED_PER_ROOM',
+  'DEFAULT_MEDIA_TTL_MS', 'DEFAULT_MESSAGE_TTL_MS',
+  'STORE_MESSAGES', 'STORE_ROOMS', 'STORE_PROFILES', 'STORE_CALLS', 'STORE_OUTBOX', 'STORE_MEDIA', 'STORE_META',
+  'supportsLocalStore', 'storageAvailable', 'localStoreError', 'openLocalStore', 'closeLocalStore', 'wipeLocalStore',
+  'isQuotaError', 'storableRows', 'messageRecord', 'mergeRecord',
+  'storeMessages', 'readMessagePage', 'readOlderMessages', 'readNewerMessages',
+  'findMessageByClientId', 'deleteMessages', 'deleteRoomMessages',
+  'readRoomState', 'saveRoomState', 'listRoomStates', 'forgetRoomState',
+  'storeProfiles', 'readProfile', 'readProfiles',
+  'storeCalls', 'readCalls', 'clearCalls',
+  'queueOutbox', 'readOutbox', 'bumpOutboxTries', 'resolveOutbox', 'clearOutbox',
+  'storeMedia', 'readMedia', 'listMedia', 'deleteMedia',
+  'readMeta', 'writeMeta',
+  'readUsage', 'requestPersistence', 'enforceRetention',
+];
+
+/**
  * The React client ships ESM while Jest runs CommonJS, so the shipped source is
  * evaluated here with its lone external dependency stubbed. Nothing is
  * re-implemented: the assertions run against the same file the browser loads,
@@ -116,9 +138,14 @@ function loadShortsFeed() {
   return loadClientModule('shortsFeed.js', SHORTS_FEED_EXPORTS);
 }
 
+function loadLocalStore() {
+  return loadClientModule('localStore.js', LOCAL_STORE_EXPORTS);
+}
+
 module.exports = {
   loadRoomChat, loadRichCards, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadStatusFeed, loadShortsFeed,
+  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
   NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
+  LOCAL_STORE_EXPORTS,
 };
