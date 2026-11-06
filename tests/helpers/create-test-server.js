@@ -17,7 +17,13 @@ const { attachSocketHandlers } = require('../../src/sockets');
 const { createMessageThrottle } = require('../../src/middleware/rate-limit');
 
 async function createTestServer(overrides = {}) {
-  const store = new MemoryStore({ messageCacheSize: env.MESSAGE_CACHE_SIZE, mediaTtlSeconds: 3600 });
+  const store = new MemoryStore({
+    messageCacheSize: env.MESSAGE_CACHE_SIZE,
+    messageHistoryMax: env.MESSAGE_HISTORY_MAX,
+    retentionSeconds: env.MESSAGE_RETENTION_S,
+    sessionTtlSeconds: env.SESSION_TTL_S,
+    mediaTtlSeconds: 3600
+  });
   const server = http.createServer();
   const io = new Server(server, { path: '/socket.io', cors: false });
 
@@ -25,7 +31,10 @@ async function createTestServer(overrides = {}) {
 
   const config = {
     instanceId: 'test-instance',
-    messageCacheSize: env.MESSAGE_CACHE_SIZE,
+    // The suite runs on the per-process store, and every path a replica would
+    // have to reach across the network is exercised against it anyway.
+    sharedStore: false,
+    historyPageSize: env.HISTORY_PAGE_SIZE,
     presenceTtlMs: env.PRESENCE_TTL_MS,
     sessionTtlSeconds: env.SESSION_TTL_S,
     uploadDir,

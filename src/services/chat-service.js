@@ -12,6 +12,9 @@ const {
   BLOCKED_MAX,
   HIDDEN_MESSAGES_MAX,
   USERNAME_MAX,
+  HISTORY_PAGE_SIZE,
+  HISTORY_PAGE_MAX,
+  userRoom,
   isSelfRoom,
   selfRoomOwner
 } = require('../constants');
@@ -64,6 +67,18 @@ class ChatService {
     const expected = Buffer.from(session.sessionTokenHash, 'hex');
     const actual = crypto.createHash('sha256').update(sessionToken).digest();
     return crypto.timingSafeEqual(expected, actual) ? session : null;
+  }
+
+  /**
+   * A socket outlives the session that opened it, and until now nothing on the
+   * wire noticed: a session that expired or was replaced kept streaming room
+   * data through a connection that had no claim to it. The token is still on
+   * the handshake, so revalidating costs one shared-store read.
+   */
+  async revalidateSocket(socket) {
+    const userId = socket.data.user && socket.data.user.userId;
+    if (!userId) return false;
+    return Boolean(await this.authenticateSession(userId, socket.handshake.auth && socket.handshake.auth.sessionToken));
   }
 
   async hasRoomAccess(user, room) {
@@ -148,6 +163,10 @@ class ChatService {
     socket.data.user = user;
 
     await this.store.trackPresence(room, socket.id, user);
+    // The personal room is what makes a per-viewer fan-out work across
+    // replicas; it is joined here as well as at connect so a socket that
+    // resumed with a restored session still carries it.
+    socket.join(userRoom(user.userId));
     socket.join(room);
     this.activeRooms.add(room);
 
@@ -202,24 +221,38 @@ class ChatService {
       }
     }
 
-    const attachments = await this.resolveAttachments(user, payload.attachments);
-    const content = sanitizeContent(payload.content);
-    const message = {
-      id: crypto.randomUUID(),
-      room: payload.room,
-      userId: user.userId,
-      displayName: user.displayName,
-      text: sanitizeText(payload.text),
-      attachments,
-      content,
-      kind: messageKind(content),
-      clientId,
-      ts: Date.now(),
-      serverId: this.config.instanceId
-    };
+    let message;
+    try {
+      const attachments = await this.resolveAttachments(user, payload.attachments);
+      const content = sanitizeContent(payload.content);
+      message = {
+        id: crypto.randomUUID(),
+        room: payload.room,
+        userId: user.userId,
+        displayName: user.displayName,
+        text: sanitizeText(payload.text),
+        attachments,
+        content,
+        kind: messageKind(content),
+        clientId,
+        ts: Date.now(),
+        serverId: this.config.instanceId
+      };
 
-    await this.store.pushMessage(payload.room, message);
-    if (clientId) await this.store.recordSend(user.userId, clientId, message.id, windowMs);
+      // Re-reading what was written would cost a round trip; what matters is
+      // that the row going out below carries the sequence the store minted, so
+      // a live message sorts against history by the same token rather than by a
+      // clock two replicas may not agree on.
+      message = await this.store.pushMessage(payload.room, message);
+      if (clientId) await this.store.recordSend(user.userId, clientId, message.id, windowMs);
+    } catch (err) {
+      // A send that stored nothing has to give its claim back, or every retry
+      // of this clientId is absorbed as a duplicate of a message that does not
+      // exist and the client waits out the whole window believing it sent.
+      if (clientId) await this.store.releaseSend(user.userId, clientId);
+      throw err;
+    }
+
     // Freshly written: nobody's device has confirmed receipt yet, so the live
     // fanout carries empty receipts and each recipient fills them in.
     await this.emitLiveMessage(payload.room, message);
@@ -227,22 +260,28 @@ class ChatService {
   }
 
   /**
-   * Live fan-out is per socket, so a guest who blocked an author never receives
-   * that author's messages on this device — the history filter and the wire now
-   * agree. Receipts stay empty because no device has confirmed anything yet.
+   * Live fan-out has to survive more than one replica, so it is expressed in
+   * rooms the redis adapter shares rather than in socket handles, which only
+   * ever exist on the process that holds them.
+   *
+   * `io.to(room)` reaches every member on every replica; each socket also sits
+   * in a personal room, so the per-viewer block filter is applied by excluding
+   * those personal rooms instead of by walking sockets one at a time. A guest
+   * who blocked the author never receives that author's messages on any device,
+   * and history and the wire agree on it.
    */
   async emitLiveMessage(room, message) {
     const payload = { ...message, seenBy: [], deliveredTo: [] };
-    const sockets = await this.io.in(room).fetchSockets();
-    for (const target of sockets) {
-      const viewer = target.data.user;
-      if (!viewer || viewer.userId === message.userId) {
-        target.emit(SOCKET_EVENTS.NEW_MESSAGE, payload);
-        continue;
-      }
-      if (await this.isBlockedBy(viewer.userId, message.userId)) continue;
-      target.emit(SOCKET_EVENTS.NEW_MESSAGE, payload);
+    const viewers = await this.store.roomUsers(room, this.config.presenceTtlMs);
+
+    const muted = [];
+    for (const userId of viewers) {
+      if (userId === message.userId) continue;
+      if (await this.isBlockedBy(userId, message.userId)) muted.push(userRoom(userId));
     }
+
+    const operator = muted.length ? this.io.to(room).except(muted) : this.io.to(room);
+    operator.emit(SOCKET_EVENTS.NEW_MESSAGE, payload);
   }
 
   async isBlockedBy(viewerId, authorId) {
@@ -281,25 +320,43 @@ class ChatService {
     return attachments;
   }
 
-  /** Poll tallies travel with history, so a rejoin shows live results. */
-  async recentMessages(room, limit) {
-    const messages = await this.store.recentMessages(room, Math.min(limit, this.config.messageCacheSize));
+  /**
+   * Poll tallies travel with history, so a rejoin shows live results. Receipts
+   * come from the same shared indexes in both store modes, and an attachment
+   * that outlived its bytes is marked expired instead of silently 404ing later.
+   */
+  async recentMessages(room, limit, before = null) {
+    return this.historyPage(room, { limit, before });
+  }
+
+  /**
+   * One page, oldest first, addressed by the store's own sequence: a client
+   * holding a page can ask for the page underneath it instead of being stuck
+   * with whatever sits at the top of the room.
+   */
+  async historyPage(room, { limit = HISTORY_PAGE_SIZE, before = null } = {}) {
+    const size = Math.max(1, Math.min(Number(limit) || HISTORY_PAGE_SIZE, HISTORY_PAGE_MAX));
+    const messages = await this.store.historyPage(room, { limit: size, before });
     const ids = messages.map((message) => message.id);
-    const seen = await this.store.seenByMessages(ids);
-    const delivered = await this.store.deliveredByMessages(ids);
-    return Promise.all(
-      messages.map(async (message) => {
-        const withSeen = {
-          ...message,
-          seenBy: seen.get(message.id) || [],
-          deliveredTo: delivered.get(message.id) || []
-        };
-        if (message.kind === MESSAGE_KINDS.POLL && message.content) {
-          withSeen.results = await this.store.pollResults(message.id, message.content.options.length);
-        }
-        return withSeen;
-      })
-    );
+    const mediaIds = messages.flatMap((message) => (message.attachments || []).map((item) => item.id));
+    const [seen, delivered, liveMedia] = await Promise.all([
+      this.store.seenByMessages(ids),
+      this.store.deliveredByMessages(ids),
+      this.store.mediaExists(mediaIds)
+    ]);
+
+    return Promise.all(messages.map(async (message) => {
+      const row = {
+        ...message,
+        seenBy: seen.get(message.id) || [],
+        deliveredTo: delivered.get(message.id) || [],
+        attachments: (message.attachments || []).map((item) => ({ ...item, expired: !liveMedia.get(item.id) }))
+      };
+      if (message.kind === MESSAGE_KINDS.POLL && message.content) {
+        row.results = await this.store.pollResults(message.id, message.content.options.length);
+      }
+      return row;
+    }));
   }
 
   /**
@@ -313,7 +370,7 @@ class ChatService {
       if (message.userId === viewer.userId) continue;
       if (await this.store.markDelivered(message.id, viewer.userId)) newly.push(message.id);
     }
-    for (const messageId of newly) this.emitDelivered(room, viewer, messageId);
+    this.emitDelivered(room, viewer, newly);
     return newly;
   }
 
@@ -323,9 +380,9 @@ class ChatService {
    * own settings are applied first: a message they blocked, deleted or cleared
    * away is not something this device received, so it earns no receipt either.
    */
-  async readHistory(room, viewer, limit) {
+  async readHistory(room, viewer, { limit = HISTORY_PAGE_SIZE, before = null } = {}) {
     const [messages, settings] = await Promise.all([
-      this.recentMessages(room, limit),
+      this.historyPage(room, { limit, before }),
       this.roomSettings(viewer, room)
     ]);
     const visible = this.filterForViewer(messages, settings);
@@ -339,27 +396,50 @@ class ChatService {
     );
   }
 
-  emitDelivered(room, user, messageId) {
-    this.io.to(room).emit(SOCKET_EVENTS.MESSAGE_DELIVERED, {
-      messageId,
+  /**
+   * A page of history reaching a device is one event, not one per row: before
+   * this, a rejoin spent a whole page of broadcasts on receipts the sender
+   * could have taken from the page itself.
+   */
+  emitDelivered(room, user, messageIds) {
+    const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
+    if (ids.length === 0) return;
+    const at = Date.now();
+    if (ids.length === 1) {
+      this.io.to(room).emit(SOCKET_EVENTS.MESSAGE_DELIVERED, {
+        messageId: ids[0],
+        userId: user.userId,
+        displayName: user.displayName,
+        room,
+        at
+      });
+      return;
+    }
+    this.io.to(room).emit(SOCKET_EVENTS.MESSAGES_DELIVERED, {
+      messageIds: ids,
       userId: user.userId,
       displayName: user.displayName,
       room,
-      at: Date.now()
+      at
     });
   }
 
   /**
    * Attachments are read back out of the message window instead of a second
    * index, so the library can never advertise a file that no message points at.
+   * `expired` is the other half of that promise: a row can outlive its bytes.
    */
-  async mediaLibrary(room, limit = 200) {
-    const messages = await this.store.recentMessages(room, Math.min(limit, this.config.messageCacheSize));
+  async mediaLibrary(room, limit = HISTORY_PAGE_MAX) {
+    const messages = await this.store.historyPage(room, { limit: Math.min(limit, HISTORY_PAGE_MAX) });
+    const live = await this.store.mediaExists(
+      messages.flatMap((message) => (message.attachments || []).map((item) => item.id))
+    );
     const items = [];
     for (const message of messages) {
       for (const attachment of message.attachments || []) {
         items.push({
           ...attachment,
+          expired: !live.get(attachment.id),
           messageId: message.id,
           kind: attachment.kind,
           ts: message.ts,
@@ -374,19 +454,17 @@ class ChatService {
   /**
    * Receipts are recorded once per reader, so only genuinely new reads are
    * broadcast; a client that re-sends the same ids costs nothing on the wire.
+   *
+   * An id is only credited to the room the socket is standing in: a client that
+   * guessed (or kept) an id from another room could otherwise mark messages it
+   * never received as read and delivered.
    */
   async markSeen(socket, messageIds) {
     const { room, user } = socket.data;
     if (!room || !user) return [];
 
     const at = Date.now();
-    const newlySeen = [];
-    for (const messageId of messageIds) {
-      if (await this.store.markSeen(messageId, user.userId)) newlySeen.push(messageId);
-      // A read implies the message reached the device, so clients that only
-      // report reads still move the sender's tick past "delivered".
-      if (await this.store.markDelivered(messageId, user.userId)) this.emitDelivered(room, user, messageId);
-    }
+    const { newlySeen, newlyDelivered } = await this.recordReceipts(room, user, messageIds, { seen: true });
 
     for (const messageId of newlySeen) {
       socket.to(room).emit(SOCKET_EVENTS.MESSAGE_SEEN, {
@@ -397,6 +475,9 @@ class ChatService {
         at
       });
     }
+    // A read implies the message reached the device, so clients that only
+    // report reads still move the sender's tick past "delivered".
+    this.emitDelivered(room, user, newlyDelivered);
     return newlySeen;
   }
 
@@ -408,12 +489,27 @@ class ChatService {
     const { room, user } = socket.data;
     if (!room || !user) return [];
 
-    const newly = [];
-    for (const messageId of messageIds) {
-      if (await this.store.markDelivered(messageId, user.userId)) newly.push(messageId);
+    const { newlyDelivered } = await this.recordReceipts(room, user, messageIds, { seen: false });
+    this.emitDelivered(room, user, newlyDelivered);
+    return newlyDelivered;
+  }
+
+  /**
+   * Shared receipt path: keep only the ids this room actually owns, then write.
+   * Returns the ids credited for the first time, so a repeat report is silent.
+   */
+  async recordReceipts(room, user, messageIds, { seen }) {
+    const ids = [...new Set(messageIds)];
+    const owners = await this.store.messageRooms(ids);
+    const mine = ids.filter((id) => owners.get(id) === room);
+
+    const newlySeen = [];
+    const newlyDelivered = [];
+    for (const messageId of mine) {
+      if (seen && await this.store.markSeen(messageId, user.userId)) newlySeen.push(messageId);
+      if (await this.store.markDelivered(messageId, user.userId)) newlyDelivered.push(messageId);
     }
-    for (const messageId of newly) this.emitDelivered(room, user, messageId);
-    return newly;
+    return { newlySeen, newlyDelivered };
   }
 
   presenceSnapshot(room) {

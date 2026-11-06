@@ -1,6 +1,6 @@
 'use strict';
 
-const { SOCKET_EVENTS } = require('../constants');
+const { SOCKET_EVENTS, userRoom } = require('../constants');
 const { parse, joinPayloadSchema, roomJoinPayloadSchema, roomPasswordSchema, sendPayloadSchema, seenIdsSchema, deliveredIdsSchema, pollVoteSchema } = require('../utils/validate');
 const { socketConnectGuard } = require('../middleware/rate-limit');
 const { isStoreDown } = require('../middleware/error-handler');
@@ -73,8 +73,15 @@ function registerChatEvents(io, deps) {
     socket.emit(SOCKET_EVENTS.SYSTEM, {
       type: 'connected',
       instanceId: deps.config.instanceId,
+      // A client that cannot tell the two apart will believe its history is
+      // shared when each replica is quietly holding its own.
+      sharedStore: deps.config.sharedStore,
       serverId: socket.id
     });
+
+    // The personal room is what lets any replica address this one user, so it
+    // is joined before the first message can arrive rather than on room join.
+    socket.join(userRoom(socket.data.user.userId));
 
     // Auto-join when the handshake already carries a room, so the common path
     // needs no extra round trip. Handlers await this instead of racing it; the
@@ -89,7 +96,10 @@ function registerChatEvents(io, deps) {
       // joinRoom broadcasts presence to the room, which already contains this
       // socket, so no separate emit is needed here.
       await chat.joinRoom(socket, room, socket.data.user);
-      socket.emit(SOCKET_EVENTS.HISTORY, { room, messages: await chat.readHistory(room, socket.data.user, 50) });
+      socket.emit(SOCKET_EVENTS.HISTORY, {
+        room,
+        messages: await chat.readHistory(room, socket.data.user, { limit: env.HISTORY_PAGE_SIZE })
+      });
     };
     const joined = requestedRoom
       ? setupJoin().catch((err) => emitError({ message: 'could not join room', reason: err.message }))
@@ -105,7 +115,10 @@ function registerChatEvents(io, deps) {
         else await chat.assertRoomAccess(socket.data.user, room);
         if (socket.data.room) await chat.leaveRoom(socket);
         await chat.joinRoom(socket, room, socket.data.user);
-        socket.emit(SOCKET_EVENTS.HISTORY, { room, messages: await chat.readHistory(room, socket.data.user, 50) });
+        socket.emit(SOCKET_EVENTS.HISTORY, {
+          room,
+          messages: await chat.readHistory(room, socket.data.user, { limit: env.HISTORY_PAGE_SIZE })
+        });
         if (typeof ack === 'function') ack(ACK_OK({ room }));
       } catch (err) {
         if (typeof ack === 'function') ack(ACK_FAILED(err));
@@ -116,6 +129,9 @@ function registerChatEvents(io, deps) {
       try {
         await joined;
         if (!socket.data.room) throw new Error('join a room first');
+        // A write is the last place a stale session can still do damage, and
+        // the check costs one shared-store read against a whole send.
+        if (!await chat.revalidateSocket(socket)) throw new Error('session_expired');
         const send = parse(sendPayloadSchema, { ...payload, room: payload.room || socket.data.room });
         if (send.room !== socket.data.room) throw new Error('room mismatch');
         const rate = await throttleMessage(socket);
@@ -134,7 +150,10 @@ function registerChatEvents(io, deps) {
           ack(ACK_OK({ duplicate: true }));
           return;
         }
-        ack(ACK_OK({ id: message.id, ts: message.ts, seenBy: [], duplicate: Boolean(message.duplicate) }));
+        // `seq` is the store's ordering, so echoing it lets the sender file its
+        // own row by the same token history and the peer's live copy use, rather
+        // than by a clock that another replica may disagree with.
+        ack(ACK_OK({ id: message.id, seq: message.seq, ts: message.ts, seenBy: [], duplicate: Boolean(message.duplicate) }));
       } catch (err) {
         logger.debug({ err, socketId: socket.id }, 'message rejected');
         emitError({ message: 'message rejected', reason: err.message });
@@ -230,6 +249,14 @@ function startHeartbeat(io, { chat, env, logger }) {
     for (const socket of sockets.values()) {
       if (!socket.data.room) continue;
       try {
+        // Same tick that refreshes presence refreshes the session, so a socket
+        // whose session died leaves instead of streaming on unauthenticated.
+        if (!await chat.revalidateSocket(socket)) {
+          logger.warn({ socketId: socket.id }, 'socket session no longer valid, disconnecting');
+          socket.emit(SOCKET_EVENTS.SYSTEM, { type: 'session_revoked' });
+          socket.disconnect(true);
+          continue;
+        }
         await chat.heartbeat(socket);
       } catch (err) {
         logger.debug({ err, socketId: socket.id }, 'presence heartbeat failed');

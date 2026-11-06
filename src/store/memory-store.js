@@ -2,6 +2,7 @@
 
 const { baseMime } = require('../utils/media');
 const { normalizeViewers } = require('../utils/status');
+const { requireOptions } = require('./options');
 const { CALL_HISTORY_MAX, STATUS_MAX_PER_USER } = require('../constants');
 
 /** Voters are stored per choice, so the tally is derived rather than mutated. */
@@ -23,18 +24,95 @@ function trimIndex(index, max) {
 }
 
 /**
+ * Insertion order is close enough to expiry order for a bounded Map, so the
+ * front is swept. Redis does this for free with a TTL; a plain Map left
+ * untouched grows for every IP, client id and room that ever appears.
+ */
+function dropOldest(map, max) {
+  let excess = map.size - max;
+  for (const key of map.keys()) {
+    if (excess <= 0) break;
+    map.delete(key);
+    excess -= 1;
+  }
+}
+
+/**
+ * A Map with the expiry semantics Redis keys have: dead on read, refreshed
+ * while in use, and never carried for ever because nobody wrote `EX`.
+ */
+class ExpiringMap {
+  constructor(ttlMs, max = 20000) {
+    this.ttlMs = ttlMs;
+    this.max = max;
+    this.entries = new Map();
+  }
+
+  read(key, { touch = false } = {}) {
+    const row = this.entries.get(key);
+    if (!row) return undefined;
+    if (row.expiresAt <= Date.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    if (touch) row.expiresAt = Date.now() + this.ttlMs;
+    return row.value;
+  }
+
+  set(key, value) {
+    this.entries.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+    dropOldest(this.entries, this.max);
+    return value;
+  }
+
+  /** Matches `SET NX`: the first writer wins and later ones change nothing. */
+  setIfAbsent(key, value) {
+    if (this.read(key) !== undefined) return false;
+    this.set(key, value);
+    return true;
+  }
+
+  delete(key) {
+    return this.entries.delete(key);
+  }
+}
+
+/**
  * Single-process stand-in for Redis. Exists so the app can boot for local
  * experimentation without an external service; it is NOT safe for the
- * multi-replica deployments described in k8s/ and docker-compose.yml.
+ * multi-replica deployments described in k8s/ and docker-compose.yml, because
+ * every row below dies with the process that wrote it.
  */
 class MemoryStore {
-  constructor({ messageCacheSize, mediaTtlSeconds = 3600 }) {
+  constructor({
+    messageCacheSize,
+    messageHistoryMax,
+    sessionTtlSeconds,
+    mediaTtlSeconds = 3600,
+    retentionSeconds = 30 * 24 * 3600
+  }) {
+    requireOptions('MemoryStore', {
+      messageCacheSize,
+      messageHistoryMax,
+      sessionTtlSeconds,
+      mediaTtlSeconds,
+      retentionSeconds
+    });
+    /** How far a linear scan may walk: poll lookups and id probes. */
     this.maxMessages = messageCacheSize;
+    /** How many rows a room keeps, which is how far history can be paged. */
+    this.historyMax = messageHistoryMax;
+    this.sessionTtl = sessionTtlSeconds;
     this.mediaTtl = mediaTtlSeconds;
+    this.settingsTtl = Math.max(mediaTtlSeconds, sessionTtlSeconds, retentionSeconds, 7 * 24 * 3600) * 1000;
     this.messages = new Map();
+    /** room -> last minted sequence, so ordering never depends on a wall clock. */
+    this.sequences = new Map();
+    /** message id -> room, so a receipt can be checked against the room it belongs to. */
+    this.messageOwner = new ExpiringMap(retentionSeconds * 1000);
     this.presence = new Map();
     this.windows = new Map();
-    this.sessions = new Map();
+    this.sessions = new ExpiringMap(sessionTtlSeconds * 1000, 50000);
     this.seen = new Map();
     this.delivered = new Map();
     this.media = new Map();
@@ -42,10 +120,10 @@ class MemoryStore {
     this.polls = new Map();
     this.notes = new Map();
     this.avatars = new Map();
-    this.roomSettings = new Map();
-    this.blocked = new Map();
-    this.roomPasswords = new Map();
-    this.roomAccess = new Set();
+    this.roomSettings = new ExpiringMap(this.settingsTtl);
+    this.blocked = new ExpiringMap(this.settingsTtl);
+    this.roomPasswords = new ExpiringMap(retentionSeconds * 1000);
+    this.roomAccess = new ExpiringMap(retentionSeconds * 1000);
     this.calls = new Map();
     this.callIndex = new Map();
     this.statuses = new Map();
@@ -56,16 +134,59 @@ class MemoryStore {
     return true;
   }
 
+  /**
+   * The sequence is minted here rather than taken from `ts`, so the in-memory
+   * store hands back exactly the row shape the Redis store does and clients
+   * can sort by one key in both modes.
+   */
   async pushMessage(room, message) {
+    const seq = (this.sequences.get(room) || 0) + 1;
+    this.sequences.set(room, seq);
+    const stored = { ...message, seq };
+
     const list = this.messages.get(room) || [];
-    list.unshift(message);
-    if (list.length > this.maxMessages) list.length = this.maxMessages;
+    list.unshift(stored);
+    for (const dropped of list.splice(this.historyMax)) this.messageOwner.delete(dropped.id);
     this.messages.set(room, list);
-    return message;
+    this.messageOwner.set(stored.id, room);
+    return stored;
   }
 
   async recentMessages(room, count) {
-    return (this.messages.get(room) || []).slice(0, count).reverse();
+    return this.historyPage(room, { limit: count });
+  }
+
+  /**
+   * One page of history, oldest first, with `before` as a sequence cursor —
+   * the same contract `RedisStore.historyPage` offers, so paging works whether
+   * or not a shared store is under the app.
+   */
+  async historyPage(room, { limit = this.maxMessages, before = null } = {}) {
+    const size = Math.max(1, Math.min(Number(limit) || 1, this.historyMax));
+    const list = this.messages.get(room) || [];
+    const rows = before === null || before === undefined
+      ? list
+      : list.filter((row) => Number(row.seq) < Number(before));
+    return rows.slice(0, size).reverse();
+  }
+
+  async messageRoom(messageId) {
+    return this.messageOwner.read(messageId) ?? null;
+  }
+
+  async messageRooms(messageIds) {
+    const out = new Map();
+    for (const id of messageIds) out.set(id, await this.messageRoom(id));
+    return out;
+  }
+
+  /** The users a room holds right now, taken from the presence index. */
+  async roomUsers(room, ttlMs, now = Date.now()) {
+    const users = new Set();
+    for (const entry of (this.presence.get(room) || new Map()).values()) {
+      if (now - entry.lastSeen <= ttlMs) users.add(entry.userId);
+    }
+    return [...users];
   }
 
   /** Returns true only the first time this user reads this message. */
@@ -161,6 +282,9 @@ class MemoryStore {
     const current = this.windows.get(bucket);
     if (!current || current.resetAt <= now) {
       this.windows.set(bucket, { total: 1, resetAt: now + windowMs });
+      // Redis expires a window on its own; this Map has to be told, or every
+      // ip that ever connects leaves a bucket behind for the life of the pod.
+      dropOldest(this.windows, 20000);
       return { total: 1, limit, remaining: Math.max(0, limit - 1) };
     }
     current.total += 1;
@@ -168,30 +292,30 @@ class MemoryStore {
   }
 
   async saveSession(session) {
-    (this.sessions ||= new Map()).set(session.userId, session);
+    this.sessions.set(session.userId, session);
     return session;
   }
 
   async getSession(userId) {
-    return this.sessions?.get(userId) ?? null;
+    return this.sessions.read(userId) ?? null;
   }
 
   async getRoomPassword(room) {
-    return this.roomPasswords.get(room) || null;
+    // Read-with-touch, exactly like the Redis path: a room in use keeps its
+    // secret, an abandoned one eventually forgets it.
+    return this.roomPasswords.read(room, { touch: true }) ?? null;
   }
 
   async setRoomPasswordIfAbsent(room, record) {
-    if (this.roomPasswords.has(room)) return false;
-    this.roomPasswords.set(room, record);
-    return true;
+    return this.roomPasswords.setIfAbsent(room, record);
   }
 
   async hasRoomAccess(room, userId) {
-    return this.roomAccess.has(`${room}:${userId}`);
+    return this.roomAccess.read(`${room}:${userId}`, { touch: true }) !== undefined;
   }
 
   async grantRoomAccess(room, userId) {
-    this.roomAccess.add(`${room}:${userId}`);
+    this.roomAccess.set(`${room}:${userId}`, '1');
   }
 
   async saveMedia(record, { ttlSeconds } = {}) {
@@ -213,6 +337,17 @@ class MemoryStore {
       return null;
     }
     return record;
+  }
+
+  /**
+   * Which of these attachment ids still resolve to bytes. A message row
+   * advertises the files it was sent with and the media record can expire
+   * first, so a read has to be able to tell the two apart.
+   */
+  async mediaExists(mediaIds) {
+    const out = new Map();
+    for (const id of mediaIds) out.set(id, Boolean(await this.getMedia(id)));
+    return out;
   }
 
   async expiredMedia(now = Date.now(), limit = 100) {
@@ -244,6 +379,17 @@ class MemoryStore {
 
   async recordSend(userId, clientId, messageId, windowMs) {
     this.sends.set(`${userId}:${clientId}`, { messageId, expiresAt: Date.now() + windowMs });
+  }
+
+  /**
+   * A send that failed before it wrote anything has to give its claim back, or
+   * the retry is absorbed as a duplicate of a message that was never stored.
+   * A recorded send keeps absorbing replays for the rest of its window.
+   */
+  async releaseSend(userId, clientId) {
+    const key = `${userId}:${clientId}`;
+    const prior = this.sends.get(key);
+    if (prior && prior.messageId === null) this.sends.delete(key);
   }
 
   async findMessage(room, messageId) {
@@ -297,7 +443,7 @@ class MemoryStore {
 
   /** Chat settings are per viewer and per room, so a room key names both. */
   async getRoomSettings(userId, room) {
-    return this.roomSettings.get(`${userId}:${room}`) || null;
+    return this.roomSettings.read(`${userId}:${room}`) ?? null;
   }
 
   async saveRoomSettings(userId, room, settings) {
@@ -310,7 +456,7 @@ class MemoryStore {
   }
 
   async getBlockedList(userId) {
-    return this.blocked.get(userId) || [];
+    return this.blocked.read(userId) || [];
   }
 
   async saveBlockedList(userId, entries) {
@@ -321,7 +467,9 @@ class MemoryStore {
   /**
    * A full room wipe, used only where the viewer owns the room. The receipts of
    * the messages being thrown away go with them, or a later room of the same
-   * name would inherit ghost ticks.
+   * name would inherit ghost ticks. The sequence counter survives, exactly as it
+   * does in Redis: a client still holding old rows must not see new messages
+   * filed under numbers it has already paged past.
    */
   async dropRoom(room) {
     const list = this.messages.get(room) || [];
@@ -329,6 +477,7 @@ class MemoryStore {
       this.seen.delete(message.id);
       this.delivered.delete(message.id);
       this.polls.delete(message.id);
+      this.messageOwner.delete(message.id);
     }
     this.messages.delete(room);
     return list.length;

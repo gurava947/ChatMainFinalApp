@@ -37,8 +37,8 @@ export function timeLeftLabel(remainingMs) {
 
 export const isLive = (status, now = Date.now()) => Number(status?.expiresAt) > now
 
-export const hasUnseen = (list) => (Array.isArray(list) ? list : [])
-  .some((status) => !status.mine && !status.viewedByMe && isLive(status))
+export const hasUnseen = (list, now = Date.now()) => (Array.isArray(list) ? list : [])
+  .some((status) => !status.mine && !status.viewedByMe && isLive(status, now))
 
 export function pickColor(hex) {
   const found = STATUS_PALETTE.find((entry) => entry.hex === hex)

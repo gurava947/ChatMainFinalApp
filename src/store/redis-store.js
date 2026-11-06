@@ -2,6 +2,8 @@
 
 const {
   messagesKey,
+  seqKey,
+  messageRoomKey,
   presenceKey,
   windowKey,
   seenKey,
@@ -27,6 +29,7 @@ const {
 } = require('../constants');
 const { baseMime } = require('../utils/media');
 const { normalizeViewers } = require('../utils/status');
+const { requireOptions } = require('./options');
 
 /**
  * Atomic counter that sets the window TTL on the very first increment, so a
@@ -51,14 +54,34 @@ return added
 `;
 
 class RedisStore {
-  constructor(client, { messageCacheSize, messageCacheTtlSeconds, sessionTtlSeconds, mediaTtlSeconds = 3600 }) {
+  constructor(client, {
+    messageCacheSize,
+    messageHistoryMax,
+    messageRetentionSeconds,
+    sessionTtlSeconds,
+    mediaTtlSeconds = 3600
+  }) {
     this.client = client;
+    requireOptions('RedisStore', {
+      messageCacheSize,
+      messageHistoryMax,
+      messageRetentionSeconds,
+      sessionTtlSeconds,
+      mediaTtlSeconds
+    });
+    /** How far a linear scan may walk: poll lookups and id probes. */
     this.maxMessages = messageCacheSize;
-    this.messageTtl = messageCacheTtlSeconds;
+    /** How many rows a room keeps, which is how far history can be paged. */
+    this.historyMax = messageHistoryMax;
+    /**
+     * The life of a room's rows, refreshed on every write. It used to be
+     * MESSAGE_CACHE_TTL_S, which let an idle room expire its entire history.
+     */
+    this.retention = messageRetentionSeconds;
     this.sessionTtl = sessionTtlSeconds;
     this.mediaTtl = mediaTtlSeconds;
     /** Chat settings outlive a message window but must not pile up forever. */
-    this.settingsTtl = Math.max(mediaTtlSeconds, sessionTtlSeconds, 7 * 24 * 3600);
+    this.settingsTtl = Math.max(mediaTtlSeconds, sessionTtlSeconds, messageRetentionSeconds, 7 * 24 * 3600);
 
     client.defineCommand('incrWithTtl', { numberOfKeys: 1, lua: INCR_WITH_TTL });
     client.defineCommand('saddWithTtl', { numberOfKeys: 1, lua: SADD_WITH_TTL });
@@ -68,18 +91,48 @@ class RedisStore {
     return (await this.client.ping()) === 'PONG';
   }
 
+  /**
+   * The sequence is minted by Redis, not by the caller, so two replicas
+   * writing at the same instant cannot both claim the next number or order
+   * their rows by a clock one of them disagrees with.
+   *
+   * `seq` is the sort score, so history is ordered by the store's own notion of
+   * arrival rather than by the row's timestamp, and a page is a score range.
+   */
   async pushMessage(room, message) {
     const key = messagesKey(room);
+    const seq = await this.client.incr(seqKey(room));
+    const stored = { ...message, seq };
+
     const multi = this.client.multi();
-    multi.lpush(key, JSON.stringify(message));
-    multi.ltrim(key, 0, this.maxMessages - 1);
-    multi.expire(key, this.messageTtl);
+    multi.zadd(key, seq, JSON.stringify(stored));
+    // Ranks are low-to-high, so dropping the front of the set drops the oldest.
+    multi.zremrangebyrank(key, 0, -(this.historyMax + 1));
+    multi.expire(key, this.retention);
+    // The counter expires with the rows it orders: a room nobody writes to for
+    // a retention period has lost its history, so restarting at 1 cannot
+    // collide with a client that still holds rows.
+    multi.expire(seqKey(room), this.retention);
+    multi.set(messageRoomKey(stored.id), room, 'EX', this.retention);
     await multi.exec();
-    return message;
+    return stored;
   }
 
   async recentMessages(room, count) {
-    const raw = await this.client.lrange(messagesKey(room), 0, Math.max(0, count) - 1);
+    return this.historyPage(room, { limit: count });
+  }
+
+  /**
+   * One page of history, oldest first. `before` is a sequence, so a client that
+   * holds a page can ask for the page underneath it instead of being stuck with
+   * whatever the top of the room happens to return.
+   */
+  async historyPage(room, { limit = this.maxMessages, before = null } = {}) {
+    const size = Math.max(1, Math.min(Number(limit) || 1, this.historyMax));
+    const raw = before === null || before === undefined
+      ? await this.client.zrevrange(messagesKey(room), 0, size - 1)
+      : await this.client.zrevrangebyscore(messagesKey(room), `(${Number(before)}`, '-inf', 'LIMIT', 0, size);
+
     const messages = [];
     for (const item of raw) {
       try {
@@ -89,6 +142,35 @@ class RedisStore {
       }
     }
     return messages.reverse();
+  }
+
+  /** The room that owns a message id, or null when this store never saw it. */
+  async messageRoom(messageId) {
+    return this.client.get(messageRoomKey(messageId));
+  }
+
+  async messageRooms(messageIds) {
+    const ids = [...messageIds];
+    if (ids.length === 0) return new Map();
+    const rooms = await this.client.mget(ids.map((id) => messageRoomKey(id)));
+    return new Map(ids.map((id, position) => [id, rooms[position] ?? null]));
+  }
+
+  /** The users a room holds right now, taken from the presence index. */
+  async roomUsers(room, ttlMs, now = Date.now()) {
+    const members = await this.client.zrangebyscore(presenceKey(room), now - ttlMs, '+inf');
+    if (members.length === 0) return [];
+    const meta = await this.client.hmget(`${presenceKey(room)}:meta`, members);
+    const users = new Set();
+    for (const raw of meta) {
+      if (!raw) continue;
+      try {
+        users.add(JSON.parse(raw).userId);
+      } catch {
+        // A corrupt presence row cannot name a user.
+      }
+    }
+    return [...users];
   }
 
   async trackPresence(room, socketId, user, now = Date.now()) {
@@ -172,14 +254,19 @@ class RedisStore {
     try {
       return JSON.parse(raw);
     } catch (error) {
-      error.message = `Invalid room password record for ${room}: ${error.message}`;
+      error.message = `Invalid session record for ${userId}: ${error.message}`;
       throw error;
     }
   }
 
   async getRoomPassword(room) {
-    const raw = await this.client.get(roomPasswordKey(room));
+    const key = roomPasswordKey(room);
+    const raw = await this.client.get(key);
     if (!raw) return null;
+    // A room that is being used keeps its secret; one nobody visits for a
+    // retention period does not stay in the keyspace for ever. Expiring was
+    // never done at all, which is how a shared store grows without bound.
+    await this.client.expire(key, this.retention);
     try {
       return JSON.parse(raw);
     } catch {
@@ -188,20 +275,31 @@ class RedisStore {
   }
 
   async setRoomPasswordIfAbsent(room, record) {
-    return (await this.client.set(roomPasswordKey(room), JSON.stringify(record), 'NX')) === 'OK';
+    return (await this.client.set(roomPasswordKey(room), JSON.stringify(record), 'EX', this.retention, 'NX')) === 'OK';
   }
 
+  /**
+   * A grant lives as long as the room, not as long as the session that asked
+   * for it: the old per-session expiry revoked a member's access on a token
+   * refresh, while the in-memory store never expired one at all. Both stores
+   * now use the room's own retention, refreshed when it is used.
+   */
   async hasRoomAccess(room, userId) {
-    return (await this.client.exists(roomAccessKey(room, userId))) > 0;
+    const key = roomAccessKey(room, userId);
+    if ((await this.client.exists(key)) === 0) return false;
+    await this.client.expire(key, this.retention);
+    return true;
   }
 
   async grantRoomAccess(room, userId) {
-    await this.client.set(roomAccessKey(room, userId), '1', 'EX', this.sessionTtl);
+    await this.client.set(roomAccessKey(room, userId), '1', 'EX', this.retention);
   }
 
   /** Returns true only for the first reader of a given message. */
   async markSeen(messageId, userId) {
-    const added = await this.client.saddWithTtl(seenKey(messageId), userId, this.messageTtl);
+    // The receipt lives as long as the row it describes: an hour-long TTL on a
+    // message kept for thirty days would quietly drop the ticks.
+    const added = await this.client.saddWithTtl(seenKey(messageId), userId, this.retention);
     return added === 1;
   }
 
@@ -214,7 +312,7 @@ class RedisStore {
 
   /** Returns true only for the first receipt this device reports for a message. */
   async markDelivered(messageId, userId) {
-    const added = await this.client.saddWithTtl(deliveredKey(messageId), userId, this.messageTtl);
+    const added = await this.client.saddWithTtl(deliveredKey(messageId), userId, this.retention);
     return added === 1;
   }
 
@@ -249,6 +347,18 @@ class RedisStore {
     }
   }
 
+  /**
+   * Which of these attachment ids still resolve to bytes. A message row
+   * advertises the files it was sent with and the media record can expire
+   * first, so a read has to be able to tell the two apart.
+   */
+  async mediaExists(mediaIds) {
+    const ids = [...mediaIds];
+    if (ids.length === 0) return new Map();
+    const rows = await this.client.mget(ids.map((id) => mediaKey(id)));
+    return new Map(ids.map((id, position) => [id, Boolean(rows[position])]));
+  }
+
   /** The index is needed because Redis expires keys silently. */
   async expiredMedia(now = Date.now(), limit = 100) {
     const ids = await this.client.zrangebyscore(mediaIndexKey(), 0, now, 'LIMIT', 0, limit);
@@ -280,8 +390,21 @@ class RedisStore {
     await this.client.set(idempotencyKey(userId, clientId), messageId, 'PX', windowMs);
   }
 
+  /**
+   * A send that failed before it wrote anything has to give its claim back.
+   * Without this the retry is absorbed as a duplicate of a message that was
+   * never stored, and the client spends the rest of the window believing it
+   * already sent.
+   */
+  async releaseSend(userId, clientId) {
+    const key = idempotencyKey(userId, clientId);
+    // Only an unanswered claim is dropped: a recorded send keeps absorbing
+    // replays for the rest of its window, which is the point of the record.
+    if ((await this.client.get(key)) === 'pending') await this.client.del(key);
+  }
+
   async findMessage(room, messageId) {
-    const raw = await this.client.lrange(messagesKey(room), 0, this.maxMessages - 1);
+    const raw = await this.client.zrevrange(messagesKey(room), 0, this.maxMessages - 1);
     for (const item of raw) {
       try {
         const message = JSON.parse(item);
@@ -307,7 +430,7 @@ class RedisStore {
     }
     const multi = this.client.multi();
     multi.hset(pollKey(messageId), userId, JSON.stringify(choices));
-    multi.expire(pollKey(messageId), this.messageTtl);
+    multi.expire(pollKey(messageId), this.retention);
     await multi.exec();
     return this.pollResults(messageId, optionCount);
   }
@@ -410,7 +533,7 @@ class RedisStore {
 
   /** Whole-room wipe for a room the viewer owns; receipts go with the messages. */
   async dropRoom(room) {
-    const raw = await this.client.lrange(messagesKey(room), 0, -1);
+    const raw = await this.client.zrange(messagesKey(room), 0, -1);
     const ids = [];
     for (const item of raw) {
       try {
@@ -422,8 +545,10 @@ class RedisStore {
     const multi = this.client.multi();
     multi.del(messagesKey(room));
     for (const id of ids) {
-      multi.del(seenKey(id), deliveredKey(id), pollKey(id));
+      multi.del(seenKey(id), deliveredKey(id), pollKey(id), messageRoomKey(id));
     }
+    // The sequence counter survives the wipe on purpose: a client that still
+    // holds rows from before would file new ones under numbers it has seen.
     await multi.exec();
     return ids.length;
   }

@@ -14,12 +14,18 @@ data:
   RATE_LIMIT_API_MAX: "120"
   RATE_LIMIT_SEND_MAX: "20"
   RATE_LIMIT_SOCKET_CONNECT_MAX: "30"
+  # Shared by every replica once the limiter runs on Redis.
+  RATE_LIMIT_SESSION_MAX: "30"
   # Presence + heartbeat
   SOCKET_HEARTBEAT_MS: "15000"
   PRESENCE_TTL_MS: "45000"
-  # Cache
+  # History: scan bound, rows a room keeps, and how long those rows survive
+  # without traffic. A replica set that cannot reach a shared Redis must not be
+  # scaled out at all - see USE_MEMORY_STORE above.
   MESSAGE_CACHE_SIZE: "200"
-  MESSAGE_CACHE_TTL_S: "3600"
+  MESSAGE_HISTORY_MAX: "1000"
+  MESSAGE_RETENTION_S: "2592000"
+  HISTORY_PAGE_SIZE: "50"
   SESSION_TTL_S: "43200"
   # Attachments. UPLOAD_DIR must be a path every replica can read and write,
   # i.e. a ReadWriteMany volume (see storage.yaml) - not an emptyDir.

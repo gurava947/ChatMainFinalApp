@@ -132,6 +132,9 @@ function toUiMessage(message, session) {
   return {
     id: message.id || message.clientId,
     clientId: message.clientId,
+    // The store's own arrival number. Two replicas' clocks disagree; their
+    // sequences do not, so this is what the list is ordered by.
+    seq: Number.isFinite(Number(message.seq)) ? Number(message.seq) : null,
     text: message.text || '',
     time: formatTime(message.ts),
     ts: Number(message.ts) || Date.now(),
@@ -154,6 +157,9 @@ function toUiMessage(message, session) {
 
 function MessageAttachment({ attachment, voiceContent, onOpenMedia }) {
   const url = attachment.url || (attachment.id ? `/media/${encodeURIComponent(attachment.id)}` : '')
+  // The message row outlives the bytes it points at, so the gap is named
+  // instead of leaving a thumbnail that 404s when it is opened.
+  if (attachment.expired) return <div className="message-attachment attachment-missing">This file is no longer on the server.</div>
   if (!url) return <div className="message-attachment attachment-missing">Attachment unavailable</div>
   if (attachment.kind === 'image') {
     return <button type="button" className="message-attachment image-attachment" aria-label={`View ${attachment.name || 'shared image'} full screen`} onClick={() => onOpenMedia({ kind: 'image', url, name: attachment.name || 'Shared image' })}><img src={url} alt={attachment.name || 'Shared image'} loading="lazy" decoding="async" /></button>
@@ -507,12 +513,38 @@ function RichComposer({ kind, onClose, onSend, onCancel }) {
   )
 }
 
+/**
+ * Ordered by the sequence the store minted, falling back to the timestamp for
+ * rows this device has not had accepted yet. Sorting by `ts` alone reordered a
+ * room whenever two replicas wrote in the same millisecond.
+ */
+function byArrival(a, b) {
+  const aSeq = Number.isFinite(a.seq) ? a.seq : null
+  const bSeq = Number.isFinite(b.seq) ? b.seq : null
+  const aKnown = aSeq !== null
+  const bKnown = bSeq !== null
+  if (aKnown && bKnown) return aSeq - bSeq || a.ts - b.ts
+  if (aKnown !== bKnown) return aKnown ? -1 : 1
+  return a.ts - b.ts
+}
+
 function mergeMessage(list, incoming) {
   const index = list.findIndex((item) => item.id === incoming.id || (incoming.clientId && item.clientId === incoming.clientId))
-  if (index < 0) return [...list, incoming].sort((a, b) => a.ts - b.ts)
+  if (index < 0) return [...list, incoming].sort(byArrival)
   const next = [...list]
   next[index] = { ...next[index], ...incoming, pending: false, failed: false }
-  return next.sort((a, b) => a.ts - b.ts)
+  return next.sort(byArrival)
+}
+
+/**
+ * Adds an older page without losing the local state (pending, failed) the
+ * current rows already carry. The same reference comes back when the page held
+ * nothing new, so the transcript does not repaint for an empty fetch.
+ */
+function mergePage(list, older) {
+  const known = new Set(list.map((message) => message.id))
+  const fresh = older.filter((message) => !known.has(message.id))
+  return fresh.length ? [...fresh, ...list].sort(byArrival) : list
 }
 
 function BrandMark() {
@@ -953,6 +985,10 @@ function ChatSettingsSheet({ chat, session, settings, onClose, onSettingsChange,
 function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, autoCall, onAutoCallHandled }) {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState([])
+  // A room keeps more rows than one read returns, so the oldest sequence this
+  // device holds is the cursor that reaches the page underneath it.
+  const [historyCursor, setHistoryCursor] = useState(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
   const [connection, setConnection] = useState('Connecting…')
   const [presenceCount, setPresenceCount] = useState(0)
   const [notice, setNotice] = useState('')
@@ -1096,8 +1132,30 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       const rows = await fetchRoomMessages(session, chat.id)
       const history = rows.map((message) => toUiMessage(message, session))
       setMessages((current) => history.reduce(mergeMessage, current.filter((message) => message.pending || message.failed)))
+      setHistoryCursor(history.length ? history[0].seq ?? null : null)
     } catch (error) {
       showNotice(error.message)
+    }
+  }
+
+  /**
+   * Reads the page underneath what this device holds. A room keeps far more
+   * rows than the first read returns, so without this the older transcript is
+   * unreachable no matter how long the room has been running.
+   */
+  const loadOlder = async () => {
+    if (historyCursor === null || loadingOlder) return
+    setLoadingOlder(true)
+    try {
+      const older = (await fetchRoomMessages(session, chat.id, { before: historyCursor }))
+        .map((message) => toUiMessage(message, session))
+      setMessages((current) => mergePage(current, older))
+      // The page came back oldest-first, so its first row is the next cursor.
+      setHistoryCursor(older.length ? older[0].seq ?? null : null)
+    } catch (error) {
+      showNotice(error.message)
+    } finally {
+      setLoadingOlder(false)
     }
   }
 
@@ -1210,6 +1268,8 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
         const pending = current.filter((message) => message.pending || message.failed)
         return history.reduce(mergeMessage, pending)
       })
+      // Rows arrive oldest first, so the first one is where the next page begins.
+      setHistoryCursor(history.length ? history[0].seq ?? null : null)
       if (history.length) onLatestMessage(chat.id, history[history.length - 1])
     })
     roomSocket.on('new_message', (message) => {
@@ -1226,22 +1286,24 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       if (item.sender !== 'me' && message.id) roomSocket.emit('message:delivered', { ids: [message.id] })
       alertForMessage(item)
     })
-    roomSocket.on('message_delivered', (receipt) => {
+    /**
+     * A receipt names the room it belongs to, and one page arriving is a list
+     * of ids rather than a message: applying a receipt meant for another room
+     * would tick messages this device never sent in this one.
+     */
+    const applyReceipt = (field) => (receipt) => {
+      if (receipt.room && receipt.room !== chat.id) return
+      const ids = receipt.messageIds || [receipt.messageId]
       setMessages((current) => current.map((message) => {
-        if (message.id !== receipt.messageId) return message
-        const deliveredTo = new Set(message.deliveredTo || [])
-        if (receipt.userId) deliveredTo.add(receipt.userId)
-        return { ...message, deliveredTo: Array.from(deliveredTo) }
+        if (!ids.includes(message.id)) return message
+        const holders = new Set(message[field] || [])
+        if (receipt.userId) holders.add(receipt.userId)
+        return { ...message, [field]: Array.from(holders) }
       }))
-    })
-    roomSocket.on('message_seen', (receipt) => {
-      setMessages((current) => current.map((message) => {
-        if (message.id !== receipt.messageId) return message
-        const seenBy = new Set(message.seenBy || [])
-        if (receipt.userId) seenBy.add(receipt.userId)
-        return { ...message, seenBy: Array.from(seenBy) }
-      }))
-    })
+    }
+    roomSocket.on('message_delivered', applyReceipt('deliveredTo'))
+    roomSocket.on('messages_delivered', applyReceipt('deliveredTo'))
+    roomSocket.on('message_seen', applyReceipt('seenBy'))
     roomSocket.on('poll_voted', (payload) => {
       if (payload.room !== chat.id || !payload.results) return
       setMessages((current) => current.map((message) => (
@@ -1251,6 +1313,14 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     roomSocket.on('presence', (snapshot) => setPresenceCount(Number(snapshot.connections) || 0))
     roomSocket.on('system', (payload) => {
       if (payload.type === 'error') showNotice(payload.message || 'Room connection error.')
+      // The server closed this socket because the session behind it is gone, so
+      // say so instead of leaving a room that looks connected but receives nothing.
+      if (payload.type === 'session_revoked') showNotice('Your session expired. Join this room again to keep chatting.')
+      // Without a shared store this instance cannot see what the others hold,
+      // and a guest would otherwise believe the room was one chat.
+      if (payload.type === 'connected' && payload.sharedStore === false) {
+        showNotice('This server has no shared store: other instances will not see this room.')
+      }
     })
     return () => {
       roomSocket.disconnect()
@@ -1289,9 +1359,12 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     return () => { active = false }
   }, [messages, session])
 
+  // Keyed on the last row rather than the whole list: reading an older page
+  // changes the list and must not drag the transcript back to the bottom.
+  const newestMessageId = messages.length ? messages[messages.length - 1].id : null
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' })
-  }, [messages])
+  }, [newestMessageId])
 
   useEffect(() => {
     const root = previewBodyRef.current
@@ -1527,6 +1600,13 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
         <button type="button" className="btn" onClick={toggleSelectMode}>Done</button>
       </div>}
       <div className="preview-body" ref={previewBodyRef} aria-live="polite">
+        {historyCursor !== null && !!visibleMessages.length && (
+          <div className="room-older-messages">
+            <button type="button" className="btn" onClick={loadOlder} disabled={loadingOlder}>
+              {loadingOlder ? 'Loading…' : 'Load older messages'}
+            </button>
+          </div>
+        )}
         {!visibleMessages.length && connection === 'Connected' && <div className="room-first-message"><MessageCircle size={25} /><strong>{chatSettings.clearedAt ? 'Your history here is cleared' : 'This room is ready'}</strong><span>Say hello to everyone who joins <b>#{chat.id}</b>.</span></div>}
         {searchIsActive && displayedMessages.length === 0 && <div className="message-search-empty"><Search size={20} /><strong>No matching messages</strong><span>Try another word, type or date range.</span></div>}
         {displayedMessages.map((message, index) => {

@@ -92,6 +92,24 @@ describe('two-user room', () => {
     expect(theirs.displayName).toBe('Ben');
   });
 
+  test('the live row carries the sequence the history row is filed under', async () => {
+    const onPeer = waitFor(b, 'new_message', (m) => m.clientId === 'seq-1');
+    const ack = await emitWithAck(b, 'message', { text: 'order me', clientId: 'seq-1' });
+
+    // The store mints this, not the writer, so it is the only token two
+    // replicas agree on. A live row without it forces each client to fall back
+    // to its own clock, which is what mis-orders same-millisecond traffic.
+    expect(Number.isInteger(ack.seq)).toBe(true);
+    const theirs = await onPeer;
+    expect(theirs.seq).toBe(ack.seq);
+
+    const page = await request(ctx.app)
+      .get('/api/rooms/standup/messages')
+      .set(sessionHeaders(bId))
+      .expect(200);
+    expect(page.body.messages.find((m) => m.id === ack.id).seq).toBe(ack.seq);
+  });
+
   test('a read receipt reaches the sender once, however often it is re-sent', async () => {
     const sent = await emitWithAck(b, 'message', { text: 'read me', clientId: 'seen-1' });
     expect(sent.ok).toBe(true);

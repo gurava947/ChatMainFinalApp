@@ -38,12 +38,26 @@ const schema = z.object({
   USE_MEMORY_STORE: boolFromEnv.default(false),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60000),
   RATE_LIMIT_API_MAX: z.coerce.number().int().min(1).default(120),
+  /**
+   * Session creations per IP per window. Once the limiter runs on Redis this
+   * bucket is shared by every replica, so everyone behind one NAT or one proxy
+   * draws on the same allowance - which makes it a knob to turn, not a constant
+   * to recompile.
+   */
+  RATE_LIMIT_SESSION_MAX: z.coerce.number().int().min(1).default(30),
   RATE_LIMIT_SEND_MAX: z.coerce.number().int().min(1).default(20),
   RATE_LIMIT_SOCKET_CONNECT_MAX: z.coerce.number().int().min(1).default(30),
   SOCKET_HEARTBEAT_MS: z.coerce.number().int().min(1000).default(15000),
   PRESENCE_TTL_MS: z.coerce.number().int().min(2000).default(45000),
   MESSAGE_CACHE_SIZE: z.coerce.number().int().min(10).default(200),
-  MESSAGE_CACHE_TTL_S: z.coerce.number().int().min(60).default(3600),
+  /**
+   * Rows a room keeps and how long they survive without traffic. The cache size
+   * is what a scan may walk; these two are what history can page back to, so a
+   * quiet room is not allowed to expire its whole conversation.
+   */
+  MESSAGE_HISTORY_MAX: z.coerce.number().int().min(10).default(1000),
+  MESSAGE_RETENTION_S: z.coerce.number().int().min(300).default(30 * 24 * 3600),
+  HISTORY_PAGE_SIZE: z.coerce.number().int().min(10).max(200).default(50),
   SESSION_TTL_S: z.coerce.number().int().min(60).default(43200),
   UPLOAD_DIR: z.string().min(1).default('uploads'),
   MEDIA_MAX_BYTES: z.coerce.number().int().min(1024).default(50 * 1024 * 1024),
@@ -73,13 +87,21 @@ if (!env.USE_MEMORY_STORE && !env.REDIS_URL) {
   if (IS_VERCEL) {
     env.USE_MEMORY_STORE = true;
     env.startupWarnings.push(
-      'REDIS_URL is not set: running the in-memory store, so rooms and presence are per instance. ' +
-      'Add a REDIS_URL (e.g. Upstash) to share state across function instances.'
+      'REDIS_URL is not set: running the in-memory store, so sessions, rooms, presence and history live ' +
+      'inside one instance. Two instances are two separate chats, and a load balancer will appear to log ' +
+      'users out at random. Add a REDIS_URL (e.g. Upstash) to share state across function instances.'
     );
   } else {
     throw new Error('REDIS_URL is required unless USE_MEMORY_STORE=true');
   }
 }
+
+/**
+ * Whether another process can see what this one writes. Everything that could
+ * mislead an operator or a test reports this instead of assuming: `/healthz`,
+ * the socket hello, and the store selection itself.
+ */
+env.sharedStore = !env.USE_MEMORY_STORE;
 
 env.corsOrigins = env.CORS_ORIGIN.split(',')
   .map((origin) => origin.trim())

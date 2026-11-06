@@ -12,6 +12,7 @@ const {
   roomThemeSchema,
   roomPasswordSchema,
   hideIdsSchema,
+  historyQuerySchema,
   profileIdsSchema,
   statusSchema,
   sanitizeText
@@ -108,8 +109,8 @@ function apiRouter({ chat, store, limiters, media, logger, io }) {
     try {
       const room = parse(roomSchema, req.params.room);
       await chat.assertRoomAccess(req.session, room);
-      const limit = Math.min(Number(req.query.limit) || 50, 200);
-      const messages = await chat.readHistory(room, req.session, limit);
+      const { limit, before } = parse(historyQuerySchema, req.query);
+      const messages = await chat.readHistory(room, req.session, { limit, before });
       res.json({ room, messages });
     } catch (err) {
       next(err);

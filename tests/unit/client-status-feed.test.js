@@ -108,10 +108,10 @@ describe('reading the feed', () => {
   });
 
   test('a new card from someone else is what lights the badge', () => {
-    expect(win.hasUnseen([card({ viewedByMe: true })])).toBe(false);
-    expect(win.hasUnseen([card({ mine: true })])).toBe(false);
-    expect(win.hasUnseen([card({})])).toBe(true);
-    expect(win.hasUnseen([])).toBe(false);
+    expect(win.hasUnseen([card({ viewedByMe: true })], NOW)).toBe(false);
+    expect(win.hasUnseen([card({ mine: true })], NOW)).toBe(false);
+    expect(win.hasUnseen([card({})], NOW)).toBe(true);
+    expect(win.hasUnseen([], NOW)).toBe(false);
   });
 
   test('the reader walks cards oldest first, so the feed is spent in order', () => {

@@ -264,9 +264,17 @@ export async function deleteChatForMe(session, room) {
  * Re-reads the room after a setting changes. While an author was blocked the
  * server skipped this device on the wire, so those rows are missing locally;
  * reading history again brings them back.
+ *
+ * `before` is the oldest sequence this device already holds, which is what
+ * reaches the page underneath it: a room keeps far more rows than one read
+ * returns, and without a cursor the older ones would be unreachable.
  */
-export async function fetchRoomMessages(session, room) {
-  const result = await settingsRequest(roomPath(room, '/messages'), session)
+export async function fetchRoomMessages(session, room, { limit, before } = {}) {
+  const query = new URLSearchParams()
+  if (limit) query.set('limit', String(limit))
+  if (before !== undefined && before !== null) query.set('before', String(before))
+  const path = roomPath(room, '/messages')
+  const result = await settingsRequest(query.toString() ? `${path}?${query}` : path, session)
   return Array.isArray(result.messages) ? result.messages : []
 }
 

@@ -77,7 +77,7 @@ function createApp({ chat, store, redis, media, logger, env, ensureStore, io }) 
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
-  app.use(healthRouter({ store, logger }));
+  app.use(healthRouter({ store, logger, env }));
 
   // A function host can take the first request before the Redis pool is open.
   // Health endpoints answer regardless, so a cold start is never reported as
@@ -106,7 +106,12 @@ function createApp({ chat, store, redis, media, logger, env, ensureStore, io }) 
       windowMs: env.RATE_LIMIT_WINDOW_MS,
       redis: redis || undefined
     }),
-    sessions: createLimiter({ name: 'session', limit: 30, windowMs: env.RATE_LIMIT_WINDOW_MS, redis: redis || undefined }),
+    sessions: createLimiter({
+      name: 'session',
+      limit: env.RATE_LIMIT_SESSION_MAX,
+      windowMs: env.RATE_LIMIT_WINDOW_MS,
+      redis: redis || undefined
+    }),
     writes: createLimiter({
       name: 'write',
       limit: env.RATE_LIMIT_SEND_MAX,

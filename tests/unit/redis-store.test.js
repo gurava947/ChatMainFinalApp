@@ -9,6 +9,33 @@ const {
   STATUS_COLORS
 } = require('../../src/constants');
 
+/** Redis scores accept `+inf`, `-inf` and the exclusive `(n` form. */
+function scoreBound(raw) {
+  const text = String(raw);
+  const exclusive = text.startsWith('(');
+  const body = exclusive ? text.slice(1) : text;
+  if (body === '+inf' || body === 'inf') return { value: Number.POSITIVE_INFINITY, exclusive };
+  if (body === '-inf') return { value: Number.NEGATIVE_INFINITY, exclusive };
+  return { value: Number(body), exclusive };
+}
+
+/** Members inside a score range, ordered the way Redis orders them: score first. */
+function byScore(zset, low, high, desc) {
+  const lo = scoreBound(low);
+  const hi = scoreBound(high);
+  return [...zset.entries()]
+    .filter(([, score]) => (lo.exclusive ? score > lo.value : score >= lo.value)
+      && (hi.exclusive ? score < hi.value : score <= hi.value))
+    .sort((a, b) => (desc ? b[1] - a[1] : a[1] - b[1]));
+}
+
+/** Rank slices are inclusive at both ends and count back from the end when negative. */
+function sliceRank(items, start, stop) {
+  const from = start < 0 ? Math.max(0, items.length + start) : start;
+  const to = stop < 0 ? items.length + stop : Math.min(stop, items.length - 1);
+  return to < from ? [] : items.slice(from, to + 1);
+}
+
 /**
  * Fake client that records the commands the store issues, so the Redis code
  * path is covered without a live server. Semantics are approximated: the goal
@@ -16,7 +43,6 @@ const {
  */
 class FakeClient {
   constructor() {
-    this.lists = new Map();
     this.zsets = new Map();
     this.hash = new Map();
     this.kv = new Map();
@@ -35,31 +61,19 @@ class FakeClient {
   }
 
   async incrWithTtl(key, ttlMs) {
-    const total = (this.kv.get(key) || 0) + 1;
+    const total = Number(this.kv.get(key) || 0) + 1;
     this.kv.set(key, total);
     this.expires.set(key, Number(ttlMs));
     this.calls.push(['incrWithTtl', key, String(ttlMs)]);
     return total;
   }
 
-  async lpush(key, value) {
-    const list = this.lists.get(key) || [];
-    list.unshift(value);
-    this.lists.set(key, list);
-    this.calls.push(['lpush', key]);
-    return list.length;
-  }
-
-  async ltrim(key, start, stop) {
-    const list = this.lists.get(key) || [];
-    this.lists.set(key, list.slice(start, stop + 1));
-    this.calls.push(['ltrim', key, start, stop]);
-    return 'OK';
-  }
-
-  async lrange(key, start, stop) {
-    const list = this.lists.get(key) || [];
-    return list.slice(start, stop + 1);
+  /** Per-room history sequence: the counter is the only ordering authority. */
+  async incr(key) {
+    const total = Number(this.kv.get(key) || 0) + 1;
+    this.kv.set(key, total);
+    this.calls.push(['incr', key]);
+    return total;
   }
 
   async expire(key, seconds) {
@@ -68,22 +82,51 @@ class FakeClient {
     return 1;
   }
 
-  async set(key, value, mode, ttl) {
+  /** Handles `SET k v EX n`, `SET k v PX n` and the `NX` tail. */
+  async set(key, value, ...args) {
+    this.calls.push(['set', key, ...args.map(String)]);
+    const modes = args.map((arg) => String(arg).toUpperCase());
+    if (modes.includes('NX') && this.kv.has(key)) return null;
+
     this.kv.set(key, value);
-    this.expires.set(key, Number(ttl));
-    this.calls.push(['set', key, 'EX', ttl]);
+    const ex = modes.indexOf('EX');
+    const px = modes.indexOf('PX');
+    if (ex !== -1) this.expires.set(key, Number(args[ex + 1]));
+    else if (px !== -1) this.expires.set(key, Number(args[px + 1]) / 1000);
+    else this.expires.delete(key);
     return 'OK';
   }
 
   async get(key) {
-    return this.kv.get(key) || null;
+    const value = this.kv.get(key);
+    return value === undefined ? null : value;
   }
 
-  async del(key) {
-    this.kv.delete(key);
-    this.sets.delete(key);
-    this.calls.push(['del', key]);
-    return 1;
+  /** `MGET` and `HMGET` take either an array or a spread, like ioredis. */
+  async mget(...args) {
+    const list = Array.isArray(args[0]) ? args[0] : args;
+    return list.map((key) => {
+      const value = this.kv.get(key);
+      return value === undefined ? null : value;
+    });
+  }
+
+  async exists(key) {
+    return this.kv.has(key) || this.zsets.has(key) || this.sets.has(key) ? 1 : 0;
+  }
+
+  async del(...keys) {
+    let removed = 0;
+    for (const key of keys) {
+      if (this.kv.has(key) || this.zsets.has(key) || this.sets.has(key) || this.hash.has(key)) removed += 1;
+      this.kv.delete(key);
+      this.zsets.delete(key);
+      this.sets.delete(key);
+      this.hash.delete(key);
+      this.expires.delete(key);
+      this.calls.push(['del', key]);
+    }
+    return removed;
   }
 
   async saddWithTtl(key, member, ttlSeconds) {
@@ -100,33 +143,64 @@ class FakeClient {
     return [...(this.sets.get(key) || new Set())];
   }
 
-  async zadd(key, score, member) {
+  async zadd(key, ...pairs) {
     const z = this.zsets.get(key) || new Map();
-    z.set(member, Number(score));
     this.zsets.set(key, z);
+    let added = 0;
+    for (let i = 0; i + 1 < pairs.length; i += 2) {
+      const member = pairs[i + 1];
+      if (!z.has(member)) added += 1;
+      z.set(member, Number(pairs[i]));
+    }
     this.calls.push(['zadd', key]);
-    return 1;
+    return added;
   }
 
-  async zrangebyscore(key, min, max, ...opts) {
+  async zrange(key, start, stop) {
+    const rows = byScore(this.zsets.get(key) || new Map(), '-inf', '+inf', false);
+    return sliceRank(rows.map(([member]) => member), start, stop);
+  }
+
+  async zrevrange(key, start, stop) {
+    const rows = byScore(this.zsets.get(key) || new Map(), '-inf', '+inf', true);
+    return sliceRank(rows.map(([member]) => member), start, stop);
+  }
+
+  /** History reads are score ranges, so paging by sequence needs no rank math. */
+  zbyScore(key, low, high, desc, opts) {
+    const rows = byScore(this.zsets.get(key) || new Map(), low, high, desc);
     const withScores = String(opts[0]).toUpperCase() === 'WITHSCORES';
-    const limitAt = opts.findIndex((o) => String(o).toUpperCase() === 'LIMIT');
-    const z = this.zsets.get(key) || new Map();
-    const low = Number(min);
-    const high = max === '+inf' ? Number.POSITIVE_INFINITY : Number(max);
-    let out = [];
-    for (const [member, score] of z) {
-      if (score < low || score > high) continue;
+    const out = [];
+    for (const [member, score] of rows) {
       out.push(member);
       if (withScores) out.push(String(score));
     }
+    const limitAt = opts.findIndex((arg) => String(arg).toUpperCase() === 'LIMIT');
     if (limitAt !== -1) {
       const offset = Number(opts[limitAt + 1]);
       const count = Number(opts[limitAt + 2]);
       const stride = withScores ? 2 : 1;
-      out = out.slice(offset * stride, offset * stride + count * stride);
+      return out.slice(offset * stride, offset * stride + count * stride);
     }
     return out;
+  }
+
+  async zrangebyscore(key, min, max, ...opts) {
+    return this.zbyScore(key, min, max, false, opts);
+  }
+
+  /** Note the argument order: `ZREVRANGEBYSCORE key max min`. */
+  async zrevrangebyscore(key, max, min, ...opts) {
+    return this.zbyScore(key, min, max, true, opts);
+  }
+
+  async zremrangebyrank(key, start, stop) {
+    const z = this.zsets.get(key) || new Map();
+    const rows = byScore(z, '-inf', '+inf', false).map(([member]) => member);
+    const doomed = sliceRank(rows, start, stop);
+    doomed.forEach((member) => z.delete(member));
+    this.calls.push(['zremrangebyrank', key, start, stop]);
+    return doomed.length;
   }
 
   async hset(key, field, value) {
@@ -139,6 +213,12 @@ class FakeClient {
   async hgetall(key) {
     const h = this.hash.get(key) || new Map();
     return Object.fromEntries(h);
+  }
+
+  async hmget(key, ...args) {
+    const fields = Array.isArray(args[0]) ? args[0] : args;
+    const h = this.hash.get(key) || new Map();
+    return fields.map((field) => (h.has(field) ? h.get(field) : null));
   }
 
   async zrem(key, ...members) {
@@ -155,34 +235,38 @@ class FakeClient {
     return fields.length;
   }
 
+  /** Queued commands run at `exec`, which is what makes the batch atomic. */
   multi() {
     const queue = [];
     const self = this;
     const api = {
       exec: async () => {
-        for (const call of queue) {
-          await self[call[0]](...call.slice(1));
-        }
-        return queue.map(() => [null, 'QUEUED']);
+        const results = [];
+        for (const call of queue) results.push([null, await self[call[0]](...call.slice(1))]);
+        return results;
       }
     };
-    ['zadd', 'hset', 'zrem', 'hdel', 'expire', 'lpush', 'ltrim', 'set', 'del'].forEach((name) => {
-      api[name] = (...args) => {
-        queue.push([name, ...args]);
-        return api;
-      };
-    });
+    Object.getOwnPropertyNames(FakeClient.prototype)
+      .filter((name) => !['constructor', 'multi', 'defineCommand'].includes(name))
+      .forEach((name) => {
+        api[name] = (...args) => {
+          queue.push([name, ...args]);
+          return api;
+        };
+      });
     return api;
   }
 }
 
-function build() {
+function build(options = {}) {
   const client = new FakeClient();
   const store = new RedisStore(client, {
     messageCacheSize: 3,
-    messageCacheTtlSeconds: 3600,
+    messageHistoryMax: 3,
+    messageRetentionSeconds: 2592000,
     sessionTtlSeconds: 43200,
-    mediaTtlSeconds: 604800
+    mediaTtlSeconds: 604800,
+    ...options
   });
   return { client, store };
 }
@@ -193,13 +277,35 @@ describe('Redis store command shape', () => {
     await expect(store.ping()).resolves.toBe(true);
   });
 
-  test('trims and TTLs the message list on every write', async () => {
+  test('a renamed option is refused at construction rather than sent as a NaN command', () => {
+    // Exactly the mistake that used to turn into `ZREMRANGEBYRANK 0 NaN` and an
+    // unexplained loss of history, so it has to fail where it is made.
+    expect(() => new RedisStore(new FakeClient(), {
+      messageCacheSize: 3,
+      messageCacheTtlSeconds: 3600,
+      sessionTtlSeconds: 43200
+    })).toThrow(/messageHistoryMax/);
+  });
+
+  test('mints a sequence, then writes the row, the trim and the owner in one batch', async () => {
     const { client, store } = build();
-    await store.pushMessage('general', { id: '1', ts: 1 });
-    expect(client.calls.map((c) => c[0])).toEqual(['lpush', 'ltrim', 'expire']);
-    expect(client.calls[1][1]).toBe('chat:messages:general');
-    expect(client.calls[1][3]).toBe(2);
-    expect(client.expires.get('chat:messages:general')).toBe(3600);
+    const stored = await store.pushMessage('general', { id: '1', ts: 1 });
+
+    expect(stored.seq).toBe(1);
+    expect(client.calls.map((c) => c[0])).toEqual(['incr', 'zadd', 'zremrangebyrank', 'expire', 'expire', 'set']);
+    expect(client.kv.get('chat:messages:seq:general')).toBe(1);
+    expect(client.zsets.get('chat:messages:general').get(JSON.stringify(stored))).toBe(1);
+    // History survives the idle room, and so does the counter that orders it;
+    // neither may be left in the keyspace for ever.
+    expect(client.expires.get('chat:messages:general')).toBe(2592000);
+    expect(client.expires.get('chat:messages:seq:general')).toBe(2592000);
+    expect(client.kv.get('chat:messages:room:1')).toBe('general');
+  });
+
+  test('the sequence keeps counting after a trim, so rows never collide', async () => {
+    const { store } = build();
+    for (let i = 1; i <= 5; i += 1) expect((await store.pushMessage('general', { id: String(i) })).seq).toBe(i);
+    expect((await store.recentMessages('general', 10)).map((m) => m.seq)).toEqual([3, 4, 5]);
   });
 
   test('reads history newest-first from Redis and returns oldest-first', async () => {
@@ -278,7 +384,7 @@ describe('Redis store command shape', () => {
     expect(await store.markSeen('m1', 'u1')).toBe(false);
     expect(await store.markSeen('m1', 'u2')).toBe(true);
 
-    expect(client.expires.get('chat:seen:m1')).toBe(3600);
+    expect(client.expires.get('chat:seen:m1')).toBe(2592000);
     expect(await store.seenByMessages(['m1', 'nope'])).toEqual(
       new Map([['m1', ['u1', 'u2']], ['nope', []]])
     );
@@ -322,6 +428,84 @@ describe('Redis store command shape', () => {
 
     expect(await store.expiredMedia(2, 2)).toHaveLength(2);
     expect(await store.expiredMedia(2, 10)).toHaveLength(3);
+  });
+});
+
+/* The reads that make replicas equivalent, asserted on Redis so the in-memory
+ * store can claim it answers them the same way. */
+describe('shared-state reads', () => {
+  test('history pages underneath a sequence cursor', async () => {
+    const { store } = build({ messageHistoryMax: 8 });
+    for (let i = 1; i <= 5; i += 1) await store.pushMessage('general', { id: String(i) });
+
+    const top = await store.historyPage('general', { limit: 2 });
+    expect(top.map((m) => m.id)).toEqual(['4', '5']);
+
+    const older = await store.historyPage('general', { limit: 2, before: top[0].seq });
+    expect(older.map((m) => m.id)).toEqual(['2', '3']);
+    expect((await store.historyPage('general', { limit: 2, before: 1 })).map((m) => m.id)).toEqual([]);
+  });
+
+  test('a message id names the room that owns it', async () => {
+    const { client, store } = build();
+    await store.pushMessage('general', { id: 'm1' });
+    await store.pushMessage('other', { id: 'm2' });
+
+    expect(client.kv.get('chat:messages:room:m1')).toBe('general');
+    expect(await store.messageRoom('m1')).toBe('general');
+    expect(await store.messageRooms(['m1', 'm2', 'nope'])).toEqual(
+      new Map([['m1', 'general'], ['m2', 'other'], ['nope', null]])
+    );
+  });
+
+  test('the people in a room come out of shared presence, stale sockets excluded', async () => {
+    const { store } = build();
+    const now = Date.now();
+    await store.trackPresence('general', 's1', { userId: 'ana', displayName: 'Ana', since: now }, now);
+    await store.trackPresence('general', 's2', { userId: 'ana', displayName: 'Ana', since: now }, now);
+    await store.trackPresence('general', 's3', { userId: 'ben', displayName: 'Ben', since: now }, now);
+    await store.trackPresence('general', 'old', { userId: 'cid', displayName: 'Cid', since: now }, now - 60000);
+
+    expect((await store.roomUsers('general', 45000, now)).sort()).toEqual(['ana', 'ben']);
+  });
+
+  test('an attachment that is gone answers false rather than a missing row', async () => {
+    const { client, store } = build();
+    await store.saveMedia({ id: 'a1', userId: 'u1', name: 'x.png', mime: 'image/png', size: 1 });
+    expect(await store.mediaExists(['a1', 'gone'])).toEqual(new Map([['a1', true], ['gone', false]]));
+
+    await client.del('chat:media:a1');
+    expect(await store.mediaExists(['a1'])).toEqual(new Map([['a1', false]]));
+  });
+
+  test('only an unanswered claim is given back', async () => {
+    const { client, store } = build();
+    await store.claimSend('u1', 'pending-client', 60000);
+    expect(await client.get('chat:idem:u1:pending-client')).toBe('pending');
+    await store.releaseSend('u1', 'pending-client');
+    expect(await client.get('chat:idem:u1:pending-client')).toBeNull();
+
+    await store.claimSend('u1', 'done-client', 60000);
+    await store.recordSend('u1', 'done-client', 'm9', 60000);
+    await store.releaseSend('u1', 'done-client');
+    expect(await client.get('chat:idem:u1:done-client')).toBe('m9');
+  });
+
+  test('a room password is stored with a life and refreshed when used', async () => {
+    const { client, store } = build();
+    const record = { hash: 'x', salt: 'y' };
+    expect(await store.setRoomPasswordIfAbsent('general', record)).toBe(true);
+    expect(await store.setRoomPasswordIfAbsent('general', { hash: 'z', salt: 'w' })).toBe(false);
+    expect(await store.getRoomPassword('general')).toEqual(record);
+    expect(client.expires.get('chat:room-password:general')).toBe(2592000);
+  });
+
+  test('a room grant outlives the session that asked for it', async () => {
+    const { client, store } = build();
+    expect(await store.hasRoomAccess('general', 'u1')).toBe(false);
+    await store.grantRoomAccess('general', 'u1');
+    expect(await store.hasRoomAccess('general', 'u1')).toBe(true);
+    expect(client.expires.get('chat:room-access:general:u1')).toBe(2592000);
   });
 });
 

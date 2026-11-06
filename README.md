@@ -103,9 +103,14 @@ heartbeat every `SOCKET_HEARTBEAT_MS`. A pod that crashes never fires `disconnec
 after `PRESENCE_TTL_MS` and a sweep removes them. `connections` counts sockets, `onlineUsers` counts
 distinct identities — one person with three tabs is one user.
 
-**Message cache.** Writes go `LPUSH` + `LTRIM` + `EXPIRE` in one MULTI, so the room keeps the newest
-`MESSAGE_CACHE_SIZE` messages for `MESSAGE_CACHE_TTL_S`. History reads come from Redis, not a database;
-swap in a durable store when history must survive cache eviction.
+**Message history.** Every write takes a room sequence from `INCR chat:messages:seq:<room>` and is stored
+as the score of a ZSET member, so ordering comes from the shared store rather than from a clock two
+replicas disagree with. A room keeps the newest `MESSAGE_HISTORY_MAX` rows and they live for
+`MESSAGE_RETENTION_S`, refreshed on every write — an idle room does not expire its own conversation, which
+is what the old `LPUSH`/`LTRIM`/`EXPIRE` cache did. `MESSAGE_CACHE_SIZE` is only how far a linear scan
+(poll lookups, id probes) may walk. A history read is one page of `HISTORY_PAGE_SIZE` rows, oldest first,
+and `?before=<seq>` returns the page underneath it; the client's "Load older" button uses that cursor.
+History still lives in Redis, not a database — swap in a durable store if rows must outlive retention.
 
 **Read receipts.** Each reader's id is added to a per-message Redis set (`SADD` + `EXPIRE` in one Lua
 script, so only the *first* read of a message by a user produces a receipt). The receipt is broadcast to
@@ -382,8 +387,10 @@ password record remain open for compatibility. Password hashes and access grants
 **per viewer** under `chat:roomsettings:<userId>:<room>` (plus `chat:blocked:<userId>`) and applied by the
 server, not by a client-side courtesy:
 
-- **Block** — `POST /api/me/blocks`. History reads filter the author out, and the live fan-out is per
-  socket (`ChatService.emitLiveMessage`), so a blocked author's messages never reach that device at all.
+- **Block** — `POST /api/me/blocks`. History reads filter the author out, and the live fan-out excludes the
+  blocker's personal room (`ChatService.emitLiveMessage` builds `io.to(room).except("u:<userId>")` from the
+  shared presence set), so a blocked author's messages never reach that device on **any** replica. Socket
+  handles are per-process, which is why the filter is expressed in rooms and not by walking sockets.
   Unblocking re-reads history, which is what brings back the rows the wire had skipped.
 - **Clear chat for me** — `POST /api/rooms/:room/clear` stores a `clearedAt` watermark. Old rows stop
   rendering for that viewer; new messages still arrive. Nothing is erased for anybody else.

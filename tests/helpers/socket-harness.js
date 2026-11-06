@@ -16,6 +16,7 @@ const RECORDED_EVENTS = [
   'stop_typing',
   'message_seen',
   'message_delivered',
+  'messages_delivered',
   'poll_voted',
   'status_created',
   'status_removed',

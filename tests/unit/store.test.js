@@ -3,8 +3,19 @@
 const MemoryStore = require('../../src/store/memory-store');
 const { CALL_HISTORY_MAX, STATUS_TTL_SECONDS, STATUS_MAX_PER_USER, STATUS_COLORS } = require('../../src/constants');
 
-function buildStore() {
-  return new MemoryStore({ messageCacheSize: 5 });
+/**
+ * The same knobs the real config passes, so a test room trims, pages and
+ * expires exactly the way a deployed one does.
+ */
+function buildStore(options = {}) {
+  return new MemoryStore({
+    messageCacheSize: 5,
+    messageHistoryMax: 5,
+    sessionTtlSeconds: 43200,
+    mediaTtlSeconds: 3600,
+    retentionSeconds: 2592000,
+    ...options
+  });
 }
 
 const BASE = Date.now();
@@ -43,7 +54,7 @@ function statusCard(id, userId, createdAt, expiresAt = createdAt + STATUS_TTL_SE
   };
 }
 
-describe('message cache', () => {
+describe('message history', () => {
   test('keeps the newest N messages and returns them oldest-first', async () => {
     const store = buildStore();
     for (let i = 1; i <= 8; i += 1) {
@@ -57,7 +68,71 @@ describe('message cache', () => {
     const store = buildStore();
     await store.pushMessage('room', { id: 'a' });
     await store.pushMessage('room', { id: 'b' });
-    expect(await store.recentMessages('room', 1)).toEqual([{ id: 'b' }]);
+    expect((await store.recentMessages('room', 1)).map((m) => m.id)).toEqual(['b']);
+  });
+
+  test('a renamed option is refused at construction rather than emptying every room', () => {
+    expect(() => new MemoryStore({ messageCacheSize: 5, sessionTtlSeconds: 43200 })).toThrow(/messageHistoryMax/);
+  });
+
+  test('stamps a per-room sequence that orders rows without trusting the clock', async () => {
+    const store = buildStore();
+    // Both rows carry the same ts, so only the minted sequence separates them.
+    const first = await store.pushMessage('general', { id: '1', ts: 1000 });
+    const second = await store.pushMessage('general', { id: '2', ts: 1000 });
+    expect([first.seq, second.seq]).toEqual([1, 2]);
+    expect((await store.recentMessages('general', 10)).map((m) => m.seq)).toEqual([1, 2]);
+
+    // Sequence counters are per room, not global.
+    expect((await store.pushMessage('other', { id: '3' })).seq).toBe(1);
+  });
+
+  test('pages underneath a cursor, oldest-first, and stops at the floor', async () => {
+    const store = buildStore({ messageHistoryMax: 8 });
+    for (let i = 1; i <= 8; i += 1) await store.pushMessage('general', { id: String(i) });
+
+    const top = await store.historyPage('general', { limit: 3 });
+    expect(top.map((m) => m.id)).toEqual(['6', '7', '8']);
+
+    const middle = await store.historyPage('general', { limit: 3, before: top[0].seq });
+    expect(middle.map((m) => m.id)).toEqual(['3', '4', '5']);
+
+    const bottom = await store.historyPage('general', { limit: 3, before: middle[0].seq });
+    expect(bottom.map((m) => m.id)).toEqual(['1', '2']);
+
+    // Paging below the oldest row returns nothing rather than repeating a page.
+    expect(await store.historyPage('general', { limit: 3, before: bottom[0].seq })).toEqual([]);
+  });
+
+  test('a page cannot be larger than the room keeps', async () => {
+    const store = buildStore({ messageHistoryMax: 4 });
+    for (let i = 1; i <= 10; i += 1) await store.pushMessage('general', { id: String(i) });
+    expect(await store.historyPage('general', { limit: 100 })).toHaveLength(4);
+  });
+
+  test('every row remembers its room, so a receipt cannot be applied elsewhere', async () => {
+    const store = buildStore();
+    const mine = await store.pushMessage('general', { id: 'm1' });
+    await store.pushMessage('other', { id: 'm2' });
+
+    expect(await store.messageRoom(mine.id)).toBe('general');
+    expect(await store.messageRoom('never-sent')).toBeNull();
+    expect(await store.messageRooms(['m1', 'm2', 'nope'])).toEqual(
+      new Map([['m1', 'general'], ['m2', 'other'], ['nope', null]])
+    );
+  });
+
+  test('wiping a room drops its rows and owners but keeps the sequence', async () => {
+    const store = buildStore();
+    await store.pushMessage('general', { id: 'm1' });
+    await store.pushMessage('general', { id: 'm2' });
+
+    expect(await store.dropRoom('general')).toBe(2);
+    expect(await store.recentMessages('general', 10)).toEqual([]);
+    expect(await store.messageRoom('m1')).toBeNull();
+    // A client holding the old rows must not see new ones filed under numbers
+    // it already paged past.
+    expect((await store.pushMessage('general', { id: 'm3' })).seq).toBe(3);
   });
 });
 
@@ -135,7 +210,7 @@ describe('read receipts', () => {
 
 describe('media metadata', () => {
   test('stores the sniffed mime and drops the record once it expires', async () => {
-    const store = new MemoryStore({ messageCacheSize: 5, mediaTtlSeconds: 1 });
+    const store = buildStore({ mediaTtlSeconds: 1 });
     const saved = await store.saveMedia({ id: 'a1', userId: 'u1', name: 'x.png', mime: 'image/png; x', size: 3 });
     expect(saved.mime).toBe('image/png');
     expect(await store.getMedia('a1')).toMatchObject({ id: 'a1' });
@@ -277,5 +352,59 @@ describe('statuses', () => {
     expect(await store.getStatus('s1', at(0))).toBeNull();
     expect(await store.listStatuses('u1', at(0))).toEqual([]);
     expect(await store.listStatuses(null, at(0))).toEqual([]);
+  });
+});
+
+/* Every read the shared store offers has to exist here too, or a single
+ * process would answer questions the deployment topology depends on. */
+describe('store parity with the shared backend', () => {
+  test('the people in a room come from presence, stale sockets excluded', async () => {
+    const store = buildStore();
+    const now = Date.now();
+    await store.trackPresence('general', 's1', { userId: 'ana', displayName: 'Ana' }, now);
+    await store.trackPresence('general', 's2', { userId: 'ana', displayName: 'Ana' }, now);
+    await store.trackPresence('general', 's3', { userId: 'ben', displayName: 'Ben' }, now);
+    await store.trackPresence('general', 'old', { userId: 'cid', displayName: 'Cid' }, now - 60000);
+
+    expect((await store.roomUsers('general', 45000, now)).sort()).toEqual(['ana', 'ben']);
+  });
+
+  test('an attachment that is gone answers false rather than a missing row', async () => {
+    const store = buildStore();
+    const saved = await store.saveMedia({ id: 'a1', userId: 'u1', name: 'x.png', mime: 'image/png', size: 1 });
+    expect(await store.mediaExists(['a1', 'gone'])).toEqual(new Map([['a1', true], ['gone', false]]));
+
+    await store.deleteMedia('a1');
+    expect(await store.mediaExists([])).toEqual(new Map());
+    expect(saved.expiresAt).toBeGreaterThan(Date.now());
+  });
+
+  test('only an unanswered claim is given back', async () => {
+    const store = buildStore();
+    expect(await store.claimSend('u1', 'pending-client', 60000)).toEqual({ fresh: true, messageId: null });
+    expect(await store.claimSend('u1', 'pending-client', 60000)).toEqual({ fresh: false, messageId: null });
+    await store.releaseSend('u1', 'pending-client');
+    expect((await store.claimSend('u1', 'pending-client', 60000)).fresh).toBe(true);
+
+    await store.claimSend('u1', 'done-client', 60000);
+    await store.recordSend('u1', 'done-client', 'm9', 60000);
+    await store.releaseSend('u1', 'done-client');
+    expect(await store.claimSend('u1', 'done-client', 60000)).toEqual({ fresh: false, messageId: 'm9' });
+  });
+
+  test('a room password is first-writer-wins', async () => {
+    const store = buildStore();
+    const record = { hash: 'x', salt: 'y' };
+    expect(await store.setRoomPasswordIfAbsent('general', record)).toBe(true);
+    expect(await store.setRoomPasswordIfAbsent('general', { hash: 'z', salt: 'w' })).toBe(false);
+    expect(await store.getRoomPassword('general')).toEqual(record);
+  });
+
+  test('a room grant outlives the session that asked for it', async () => {
+    const store = buildStore({ sessionTtlSeconds: 1 });
+    await store.saveSession({ userId: 'u1', displayName: 'Ada', expiresAt: Date.now() + 60000 });
+    expect(await store.hasRoomAccess('general', 'u1')).toBe(false);
+    await store.grantRoomAccess('general', 'u1');
+    expect(await store.hasRoomAccess('general', 'u1')).toBe(true);
   });
 });

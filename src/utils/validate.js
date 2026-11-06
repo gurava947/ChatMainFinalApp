@@ -15,6 +15,8 @@ const {
   VOICE_MAX_MS,
   VOICE_PEAKS_MAX,
   NOTE_MAX_CHARS,
+  HISTORY_PAGE_SIZE,
+  HISTORY_PAGE_MAX,
   CHAT_THEMES,
   PROFILE_LOOKUP_MAX,
   STATUS_COLORS,
@@ -105,6 +107,16 @@ const hideIdsSchema = z.object({
 const profileIdsSchema = z.string().min(1)
   .transform((value) => value.split(',').map((id) => id.trim()).filter(Boolean))
   .pipe(z.array(z.string().uuid()).min(1).max(PROFILE_LOOKUP_MAX));
+
+/**
+ * History paging arrives in the query string, so both numbers are coerced.
+ * `before` is the sequence the client already holds, which is what makes the
+ * page underneath it reachable instead of only the top of the room.
+ */
+const historyQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(HISTORY_PAGE_MAX).default(HISTORY_PAGE_SIZE),
+  before: z.coerce.number().int().min(0).optional()
+});
 
 const joinPayloadSchema = z.object({
   room: roomSchema,
@@ -327,6 +339,7 @@ module.exports = {
   roomThemeSchema,
   roomPasswordSchema,
   hideIdsSchema,
+  historyQuerySchema,
   profileIdsSchema,
   joinPayloadSchema,
   roomJoinPayloadSchema,

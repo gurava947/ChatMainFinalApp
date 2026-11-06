@@ -31,7 +31,10 @@ function createRuntime(options = {}) {
 
   const redisClients = env.USE_MEMORY_STORE ? null : createRedisClients();
 
-  const store = createStore(redisClients);
+  // `shared` is not decoration: it is the difference between a replica that
+  // can be added to a deployment and one whose sessions, history and presence
+  // live and die inside its own process.
+  const { shared, store } = createStore(redisClients);
   const server = providedServer || http.createServer();
 
   const io = new Server(server, {
@@ -56,7 +59,8 @@ function createRuntime(options = {}) {
 
   const config = {
     instanceId: env.INSTANCE_ID,
-    messageCacheSize: env.MESSAGE_CACHE_SIZE,
+    sharedStore: shared,
+    historyPageSize: env.HISTORY_PAGE_SIZE,
     presenceTtlMs: env.PRESENCE_TTL_MS,
     sessionTtlSeconds: env.SESSION_TTL_S,
     uploadDir: env.uploadDir,
@@ -165,7 +169,7 @@ function createRuntime(options = {}) {
     ready.catch((err) => logger.warn({ err }, 'store warm-up incomplete, first request will reconnect'));
   }
 
-  return { server, io, app, store, chat, media, ready, shutdown };
+  return { server, io, app, store, shared, chat, media, ready, shutdown };
 }
 
 async function bootstrap() {

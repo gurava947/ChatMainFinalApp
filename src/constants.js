@@ -23,6 +23,20 @@ const DELIVERED_BATCH_MAX = 50;
 const ATTACHMENTS_MAX = 5;
 const MEDIA_SWEEP_EVERY_MS = 60000;
 
+/**
+ * A page of history. The socket join and the HTTP read both answer with this
+ * many rows, and a client asks for the next page with the oldest sequence it
+ * already holds, so nothing in the room is unreachable.
+ */
+const HISTORY_PAGE_SIZE = 50;
+const HISTORY_PAGE_MAX = 200;
+/**
+ * Rows a room keeps. The scan cap below is what a linear read may walk; the
+ * two are separate because paging a 1000-row room must not make a poll lookup
+ * scan 1000 rows.
+ */
+const MESSAGE_HISTORY_MAX = 1000;
+
 /** A poll is the one message type that keeps mutating after it is sent. */
 const POLL_OPTIONS_MIN = 2;
 const POLL_OPTIONS_MAX = 12;
@@ -108,6 +122,8 @@ const SOCKET_EVENTS = Object.freeze({
   MESSAGE_SEEN: 'message_seen',
   DELIVERED_MARK: 'message:delivered',
   MESSAGE_DELIVERED: 'message_delivered',
+  /** A whole page arriving is one receipt event, not one per row. */
+  MESSAGES_DELIVERED: 'messages_delivered',
   POLL_VOTE: 'poll:vote',
   POLL_VOTED: 'poll_voted',
   STATUS_CREATED: 'status_created',
@@ -132,6 +148,9 @@ module.exports = {
   DELIVERED_BATCH_MAX,
   ATTACHMENTS_MAX,
   MEDIA_SWEEP_EVERY_MS,
+  HISTORY_PAGE_SIZE,
+  HISTORY_PAGE_MAX,
+  MESSAGE_HISTORY_MAX,
   POLL_OPTIONS_MIN,
   POLL_OPTIONS_MAX,
   POLL_OPTION_MAX_CHARS,
@@ -154,6 +173,10 @@ module.exports = {
   STATUS_COLORS,
   SOCKET_EVENTS,
   messagesKey: (room) => `${MESSAGE_NS}:${room}`,
+  /** Per-room counter: the sequence it hands out orders history and pages it. */
+  seqKey: (room) => `${MESSAGE_NS}:seq:${room}`,
+  /** Which room owns a message id, so a receipt can be checked against it. */
+  messageRoomKey: (messageId) => `${MESSAGE_NS}:room:${messageId}`,
   presenceKey: (room) => `${PRESENCE_NS}:${room}`,
   windowKey: (bucket) => `${WINDOW_NS}:${bucket}`,
   seenKey: (messageId) => `${SEEN_NS}:${messageId}`,
@@ -173,6 +196,12 @@ module.exports = {
   statusUserKey: (userId) => `chat:status:user:${userId}`,
   statusActiveKey: () => 'chat:status:active',
   idempotencyKey: (userId, clientId) => `chat:idem:${userId}:${clientId}`,
+  /**
+   * Every socket also sits in its own room, so a replica can address one user
+   * without knowing which replica holds that user's connection: the adapter
+   * carries the membership across processes the way it carries chat rooms.
+   */
+  userRoom: (userId) => `u:${userId}`,
   /** Room id is a slug, so the owner's uuid drops straight in after the prefix. */
   selfRoom: (userId) => `${SELF_ROOM_PREFIX}${userId}`,
   isSelfRoom: (room) => String(room || '').startsWith(SELF_ROOM_PREFIX),

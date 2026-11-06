@@ -1,0 +1,37 @@
+[+] T1 cross-instance room sync :: {"sendAckOk":true,"liveReceivedByPeerInstance":1,"messagesOn3000":1,"messagesOn3001":1,"verdict":"synced"}
+[+] T2 session portable across instances :: {"socketAuth":"accepted","httpOnPeerInstance":{"status":200,"body":{"room":"qa-r7-portable","messages":[]}},"verdict":"portable"}
+[+] T3 4-session realtime fan-out (single instance) :: {"sendAckOk":true,"peerReceipts":[1,1,1],"senderOwnCopies":1,"presenceConnections":4,"presenceOnlineUsers":4,"verdict":"all 3 peers got exactly one copy"}
+[+] T4 room password consistency across instances :: {"firstSetOn3000":200,"wrongPassRejectedOn3000":403,"peerAcceptedItsOwnSecret3001":403,"originPasswordNowRejectedOn3001":200,"verdict":"consistent"}
+[+] T5 retry after failed send with same clientId :: {"firstAttemptAck":{"ok":false,"error":"unknown attachment 0155ee73-b56c-490c-8b8c-730af3653d21"},"retryAck":{"ok":true,"id":"50764124-6184-4f4d-ae92-ddf9d9894826","ts":1793955691792,"seenBy":[],"duplicate":false},"storedTexts":["retry after failure"],"peerLiveTexts":["retry after failure"],"verdict":"retry persisted"}
+[+] T6 presence agreement across instances (3 on 3000, 2 on 3001) :: {"viewFrom3000":{"connections":5,"onlineUsers":5},"viewFrom3001":{"connections":5,"onlineUsers":5},"actualTotal":5,"verdict":"both agree"}
+[+] T7 rejoin delivery receipts :: {"deliveredBroadcastsFromOneRejoin":0,"rowsReturnedOnRejoin":10,"rowsMarkedDeliveredOnArrival":10,"verdict":"bounded"}
+[~] T8 t8 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-gap-a)"}
+[~] T9 t9 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-ord-a)"}
+[~] T10 t10 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-trunc)"}
+[~] T11 t11 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-rl)"}
+[~] T12 t12 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-san)"}
+[~] T13 t13 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-sw-stayer)"}
+[~] T14 t14 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-forge-victim)"}
+[~] T15 media record expiry vs the message that cites it :: {"attachmentResolvableBeforeExpiry":true,"attachmentResolvableAfterExpiry":false,"messageStillAdvertisesAttachment":true,"storedAttachmentMeta":[{"id":"059bc9b4-1ed9-45aa-9492-8086e1ec9d02","kind":"image","name":"a.png","mime":"image/png","size":10}],"verdict":"the media record expired while the message that cites it stayed in history: the row keeps advertising an attachment whose bytes are gone, and nothing prunes or marks it. In production MEDIA_TTL_S is 7 days while a Redis-backed history outlives that, so old chats carry permanently broken files."}
+[~] T16 t16 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-expiry)"}
+[~] T17 t17 :: {"message":"room join failed 429 {\"error\":\"rate_limited\",\"retryAfterMs\":60000} (r7-page)"}
+
+=== SUMMARY r7 ===
+PASS  T1 cross-instance room sync
+PASS  T2 session portable across instances
+PASS  T3 4-session realtime fan-out (single instance)
+PASS  T4 room password consistency across instances
+PASS  T5 retry after failed send with same clientId
+PASS  T6 presence agreement across instances (3 on 3000, 2 on 3001)
+PASS  T7 rejoin delivery receipts
+ERROR T8 t8
+ERROR T9 t9
+ERROR T10 t10
+ERROR T11 t11
+ERROR T12 t12
+ERROR T13 t13
+ERROR T14 t14
+WARN  T15 media record expiry vs the message that cites it
+ERROR T16 t16
+ERROR T17 t17
+counts: {"PASS":7,"ERROR":9,"WARN":1}
