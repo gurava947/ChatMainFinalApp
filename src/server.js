@@ -27,8 +27,6 @@ const SHUTDOWN_GRACE_MS = 10000;
 function createRuntime(options = {}) {
   const { listen = true, server: providedServer, installSignalHandlers = listen } = options;
 
-  env.startupWarnings.forEach((message) => logger.warn(message));
-
   const redisClients = env.USE_MEMORY_STORE ? null : createRedisClients();
 
   // `shared` is not decoration: it is the difference between a replica that

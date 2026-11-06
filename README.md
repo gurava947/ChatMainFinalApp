@@ -24,12 +24,13 @@ npm ci
 # Build the supplied InChat React UI into client/dist/:
 npm --prefix client ci
 npm run build:client
-# Only for a single-process run; the two-seat cap needs a shared store to mean anything:
-USE_MEMORY_STORE=true PORT=3000 npm start
+# Single-process only, and deliberately a development run: the two-seat cap needs
+# a shared store to mean anything, and production refuses to boot without one.
+NODE_ENV=development USE_MEMORY_STORE=true PORT=3000 npm start
 # open http://localhost:3000; the first guest to name a room owns it and is handed a pairing code
 # for the second seat. With one process the roster lives in memory, so use a real Redis before
 # running more than a single instance.
-# For UI development, run `CORS_ORIGIN=http://localhost:5173 USE_MEMORY_STORE=true PORT=3000 npm start`
+# For UI development, run `NODE_ENV=development CORS_ORIGIN=http://localhost:5173 USE_MEMORY_STORE=true PORT=3000 npm start`
 # in one terminal and `npm run dev:client` in another.
 
 npm run lint && npm test
@@ -233,9 +234,13 @@ A room's roster is its only membership record:
   `limiters.writes` bounds how fast anybody can walk it. Refusals distinguish `pairing_code_required`
   from `invalid_pairing_code` because telling a partner "you forgot the code" versus "this room is
   taken" is worth more than the one bit of information an attacker gains.
-- **The cap is only real on a shared store.** `USE_MEMORY_STORE=true` keeps each process its own roster,
-  so two replicas each hand out two seats and the limit silently doubles. Production must set
-  `REDIS_URL`; `/healthz` reports `sharedStore`, and the UI refuses to pretend otherwise.
+- **The cap is only real on a shared store, so production requires one.** `USE_MEMORY_STORE=true` keeps
+  each process its own roster, so two replicas each hand out two seats and the limit silently doubles.
+  That is a misconfiguration, not a degraded mode, so `src/config/env.js` throws at startup when
+  `NODE_ENV=production` has no `REDIS_URL` instead of booting and serving traffic with an unenforceable
+  cap. A cold start that fails loudly is a visible signal; a room that admits a third person is a
+  private-conversation breach nobody notices. `/healthz` reports `sharedStore`, and the UI refuses to
+  pretend otherwise.
 - **What this does not claim.** Nothing here is end-to-end encrypted. The server holds plaintext
   message text, and pairing codes protect *access*, not content, from the operator. A room's
   conversation is readable by whoever runs the backend.
@@ -322,7 +327,9 @@ Caveats worth knowing before you rely on it:
 - Its disk is ephemeral: attachments are lost on redeploy or restart, while their Redis metadata expires
   after `MEDIA_TTL_S`. Enough for testing; use object storage for anything real.
 - Upstash's free plan caps daily requests, and the Socket.io adapter publishes typing and presence
-  traffic through it. If you hit the cap, drop to `USE_MEMORY_STORE=true` for single-instance testing.
+  traffic through it. If you hit the cap, the service has to stop answering until the quota resets -
+  `USE_MEMORY_STORE=true` is not an escape hatch on a production deploy, it is refused at startup. Run a
+  development-mode instance locally instead if you need to probe the app without Redis.
 
 ## Vercel deploy (the path running at `inchat-alpha.vercel.app`)
 
@@ -365,9 +372,12 @@ What the repo does to fit that model:
   `npm_config_cache-dir` setting from the Vercel project/team environment or build configuration.
 - WebSockets are the first transport; a socket lives at most `maxDuration`, then the client reconnects
   and repaints the transcript from Redis. Presence and rooms are rebuilt on that reconnect.
-- `REDIS_URL` is what makes two tabs the same conversation. Without it the app logs a warning and falls
-  back to the in-memory store, which is per instance: two clients can land on two instances and the
-  second join fails as `unknown session`. Use the Upstash integration, whose free plan is enough.
+- `REDIS_URL` is what makes two tabs the same conversation, and on Vercel it is also what makes a room
+  hold two people. `NODE_ENV` is `production` there, so a deploy without `REDIS_URL` fails at module
+  load rather than falling back to the per-instance in-memory store - the function answers
+  `500 FUNCTION_INVOCATION_FAILED` until the variable is set. That is the intended failure: the
+  fallback used to serve traffic while quietly letting a second isolate seat a third guest. Use the
+  Upstash integration, whose free plan is enough.
 - Only `/tmp` is writable, so `UPLOAD_DIR` defaults to `/tmp/uploads` and `MEDIA_MAX_BYTES` to 4 MB on
   Vercel; `CORS_ORIGIN` is derived from `VERCEL_URL`/`VERCEL_PROJECT_PRODUCTION_URL` when unset.
 - Cold starts are absorbed rather than returned as errors: `/api` and `/media` check the store on every
@@ -382,8 +392,9 @@ once in the dashboard - *Project → Settings → Git → Connect to GitHub* →
 branch `main` (the `vercel git connect` CLI does the same thing). Everything the platform needs
 (`api/index.js` and `vercel.json`) is in the repo, so a git-driven deploy behaves exactly like the CLI
 one. The **Root Directory** and secrets are project-level settings, not repository files. Configure
-`REDIS_URL` with the Upstash integration in Vercel; without it, room state falls back to per-instance
-memory and is not reliable across function instances. Never commit the live Redis URL.
+`REDIS_URL` with the Upstash integration in Vercel before the first deploy; without it the function
+cannot load and every request answers `500 FUNCTION_INVOCATION_FAILED` until the variable is set.
+Never commit the live Redis URL.
 
 Same ephemeral-disk caveat as Render - attachments live in `/tmp` and vanish with the instance, so point
 `MEDIA_*` at object storage before relying on them. For an always-on socket server with no such
@@ -391,8 +402,10 @@ constraints, use the Render or Docker/Kubernetes path above.
 
 ## Configuration
 
-See `.env.example` for every variable. Notables: `REDIS_URL` (required unless `USE_MEMORY_STORE=true`;
-on Render it is filled in from the blueprint prompt and `CORS_ORIGIN` is derived from
+See `.env.example` for every variable. Notables: `REDIS_URL` (required unless `USE_MEMORY_STORE=true`,
+and required even with that set when `NODE_ENV=production`, because the memory store cannot enforce a
+room's two seats across processes; on Render it is filled in from the blueprint prompt and
+`CORS_ORIGIN` is derived from
 `RENDER_EXTERNAL_HOSTNAME`, on Vercel the Upstash integration provides it and `CORS_ORIGIN` is derived
 from `VERCEL_URL`), `CORS_ORIGIN` (comma-separated allowlist), `TRUST_PROXY_HOPS` (1 behind Nginx, 2 behind CDN + LB —
 get this wrong and both the rate limiter and logs key off the proxy IP), the four rate limits, and the
@@ -610,11 +623,12 @@ at `/api/me/note` (survives a reload, scoped to the session), "Rooms on this dev
 removes it from `localStorage` only, and "Sign out of this device" clears the guest keys behind an
 explicit confirm. Removing a room does not delete it for anyone else, and the sheet says so.
 
-**B5 - the in-memory store is single-replica.** `USE_MEMORY_STORE=true` keeps rooms, presence and receipts
-in one process's Maps: restart the server and everything is gone, two replicas cannot see each other, and
-the socket adapter is likewise in-memory. `k8s/`, `docker-compose.yml` and the Render/Vercel paths all
-expect Redis, so this mode is for local work only. The startup log says it out loud rather than letting
-the first restart be the discovery.
+**B5 - the in-memory store is single-replica.** `USE_MEMORY_STORE=true` keeps rooms, presence, receipts
+and room rosters in one process's Maps: restart the server and everything is gone, two replicas cannot
+see each other, and the socket adapter is likewise in-memory. `k8s/`, `docker-compose.yml` and the
+Render/Vercel paths all expect Redis, so this mode is for local work only - and `NODE_ENV=production`
+refuses to start without a `REDIS_URL` rather than trusting that only one process will ever run. The
+startup log says the mode out loud rather than letting the first restart be the discovery.
 
 **Other things worth knowing.** `GET /api/events` is unauthenticated on purpose (it publishes event names
 and size limits, nothing user-owned). Calling is WebRTC signalling relayed over sockets with STUN only -

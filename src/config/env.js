@@ -14,9 +14,9 @@ if (!process.env.CORS_ORIGIN && process.env.RENDER_EXTERNAL_HOSTNAME) {
   process.env.CORS_ORIGIN = `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`;
 }
 
-// Vercel names the deployment and the production alias for us. Throwing on a
-// missing REDIS_URL used to turn the whole function into a 500 page, so the
-// platform defaults below keep it runnable and say what was traded away.
+// Vercel names the deployment and the production alias for us. These are the
+// platform defaults that are safe to derive; REDIS_URL is deliberately not one
+// of them - see the shared-store gate below.
 if (IS_VERCEL) {
   const hosts = [process.env.VERCEL_PROJECT_PRODUCTION_URL, process.env.VERCEL_URL]
     .filter(Boolean)
@@ -80,20 +80,26 @@ const env = parsed.data;
 
 env.INSTANCE_ID = process.env.INSTANCE_ID || process.env.HOSTNAME || `local-${process.pid}`;
 
-// Warnings collected before the logger exists; the server logs them once it can.
-env.startupWarnings = [];
+/**
+ * A room's two seats are one compare-and-set record, so the cap only means
+ * anything if every replica reads the same one. With the in-memory store each
+ * isolate keeps its own roster: two isolates is four seats, and a guest who
+ * was refused on one gets in on the next. Silently falling back used to keep a
+ * misconfigured deploy serving traffic while quietly breaking the one rule
+ * that makes rooms private, so production refuses to boot instead. It is loud
+ * on purpose - a cold start that throws is a signal, a room that admits a
+ * third person is a vulnerability nobody sees.
+ */
+if (env.NODE_ENV === 'production' && !env.REDIS_URL) {
+  throw new Error(
+    'REDIS_URL is required in production. Without a shared store each instance holds its own rooms, '
+    + 'so the two-seat cap is per-process and a guest can pair into a room that is already full. '
+    + 'Set REDIS_URL, or run with NODE_ENV=development USE_MEMORY_STORE=true to try it locally.'
+  );
+}
 
 if (!env.USE_MEMORY_STORE && !env.REDIS_URL) {
-  if (IS_VERCEL) {
-    env.USE_MEMORY_STORE = true;
-    env.startupWarnings.push(
-      'REDIS_URL is not set: running the in-memory store, so sessions, rooms, presence and history live ' +
-      'inside one instance. Two instances are two separate chats, and a load balancer will appear to log ' +
-      'users out at random. Add a REDIS_URL (e.g. Upstash) to share state across function instances.'
-    );
-  } else {
-    throw new Error('REDIS_URL is required unless USE_MEMORY_STORE=true');
-  }
+  throw new Error('REDIS_URL is required unless USE_MEMORY_STORE=true');
 }
 
 /**
