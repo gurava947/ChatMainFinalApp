@@ -1,5 +1,10 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+
+const APP_SOURCE = fs.readFileSync(path.join(__dirname, '..', '..', 'client', 'src', 'App.jsx'), 'utf8');
+
 /**
  * The rules that decide what a guest sees after the room has been re-read.
  *
@@ -178,5 +183,57 @@ describe('which rows earn a write', () => {
       { id: 'b', kind: 'file', messageId: 'm1' },
       { id: 'c', kind: 'video', messageId: 'm3' },
     ]);
+  });
+});
+
+describe('what the transcript shows while its first page arrives', () => {
+  it('draws the skeleton only while the local read is actually running', () => {
+    expect(t.transcriptPhase({ hydrating: true })).toBe('skeleton');
+    expect(t.transcriptPhase({ hydrating: true, messages: 4 })).toBe('transcript');
+    expect(t.transcriptPhase({})).not.toBe('skeleton');
+  });
+
+  it('never lets a shimmer cover a read that already failed', () => {
+    // The bug this rule exists to stop: a rejected read looked like an empty room.
+    expect(t.transcriptPhase({ hydrating: true, failure: 'boom' })).toBe('failure');
+    expect(t.transcriptPhase({ failure: 'boom', connected: true })).toBe('failure');
+    expect(t.transcriptPhase({ failure: 'boom', messages: 2 })).toBe('transcript');
+  });
+
+  it('invites the first message only once the room is really empty', () => {
+    expect(t.transcriptPhase({ connected: true })).toBe('empty');
+    expect(t.transcriptPhase({ connected: true, hydrating: true })).toBe('skeleton');
+    expect(t.transcriptPhase({})).toBe('connecting');
+    expect(t.transcriptPhase({ connected: false, messages: 1 })).toBe('transcript');
+  });
+
+  it('keeps the skeleton short enough that the view does not jump', () => {
+    expect(t.SKELETON_ROWS).toBeGreaterThan(0);
+    expect(t.SKELETON_ROWS).toBeLessThanOrEqual(8);
+  });
+
+  it('names a dead local read as a local read, not as a dead server', () => {
+    expect(t.localReadFailure(new Error('The database was closed.')))
+      .toBe('This device could not open its own copy of this chat: The database was closed.');
+    expect(t.localReadFailure('quota exceeded'))
+      .toBe('This device could not open its own copy of this chat: quota exceeded');
+    expect(t.localReadFailure(new Error(''))).toBe('This device could not open its own copy of this chat.');
+    expect(t.localReadFailure(undefined)).toBe('This device could not open its own copy of this chat.');
+  });
+
+  it('tells the live region it is busy, and tells it once', () => {
+    // The transcript column is an aria-live region. While it is being filled it
+    // has to say so, or every shimmer row is an announcement; and the shapes
+    // themselves stay out of the accessibility tree because the one line above
+    // them already says what is happening.
+    expect(APP_SOURCE).toMatch(/className="preview-body"[^>]*aria-busy=\{bodyPhase === 'skeleton'\}/);
+    expect(APP_SOURCE).toMatch(/<p className="feed-loading" role="status">Opening this chat from this device/);
+    expect(APP_SOURCE).toMatch(/<div className="transcript-skeleton" aria-hidden="true">/);
+  });
+
+  it('gives a failed read its own alert, and a way to ask for it again', () => {
+    expect(APP_SOURCE).toMatch(/hydrateFailure && <p className="feed-failure" role="alert">/);
+    expect(APP_SOURCE).toMatch(/onClick=\{\(\) => setHydrateAttempt\(\(count\) => count \+ 1\)\}>Try again/);
+    expect(APP_SOURCE).toMatch(/setHydrateFailure\(''\)/);
   });
 });

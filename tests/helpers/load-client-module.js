@@ -101,7 +101,7 @@ const LOCAL_STORE_EXPORTS = [
  */
 const TRANSCRIPT_EXPORTS = [
   'byArrival', 'mergeMessage', 'mergePage', 'mergeServerPage', 'olderCursor',
-  'rowsToPersist', 'attachmentRows',
+  'rowsToPersist', 'attachmentRows', 'transcriptPhase', 'localReadFailure', 'SKELETON_ROWS',
 ];
 
 /**

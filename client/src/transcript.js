@@ -107,3 +107,35 @@ export function rowsToPersist(rows, persisted, dirty) {
 export function attachmentRows(rows) {
   return (rows || []).flatMap((message) => (message.attachments || []).map((file) => ({ ...file, messageId: message.id })))
 }
+
+/** Rows drawn while the local read is still in flight: enough to look like a page. */
+export const SKELETON_ROWS = 5
+
+/**
+ * What the middle of a conversation shows while its first page is assembled from
+ * three sources at once - this device's IndexedDB copy, the socket's history, and
+ * the connection. Kept together because the markup used to get it wrong where
+ * anyone could see it: a read that failed looked exactly like a room nobody had
+ * spoken in, so the app invited the guest to "say hello" over a transcript it had
+ * just failed to open. `failure` outranks `hydrating` so a read that has given up
+ * can never be covered by a shimmer that claims it is still working.
+ */
+export function transcriptPhase({ hydrating = false, failure = '', messages = 0, connected = false } = {}) {
+  if (messages > 0) return 'transcript'
+  if (failure) return 'failure'
+  if (hydrating) return 'skeleton'
+  if (connected) return 'empty'
+  return 'connecting'
+}
+
+/**
+ * A failed local read is not a failed connection, and the wording has to say
+ * which one the reader is looking at. The underlying message is kept because
+ * "storage is full" and "this browser blocks IndexedDB" are fixed differently.
+ */
+export function localReadFailure(reason) {
+  const detail = reason?.message || (typeof reason === 'string' ? reason : '')
+  return detail
+    ? `This device could not open its own copy of this chat: ${detail}`
+    : 'This device could not open its own copy of this chat.'
+}

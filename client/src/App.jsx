@@ -34,7 +34,7 @@ import {
 } from './statusFeed'
 import { collectVideoClips } from './shortsFeed'
 import {
-  attachmentRows, mergeMessage, mergePage, mergeServerPage, olderCursor, rowsToPersist,
+  attachmentRows, localReadFailure, mergeMessage, mergePage, mergeServerPage, olderCursor, rowsToPersist, SKELETON_ROWS, transcriptPhase,
 } from './transcript'
 import {
   clearCalls, deleteMedia, deleteMessages, deleteRoomMedia, deleteRoomMessages, forgetRoomState, isQuotaError,
@@ -360,6 +360,7 @@ function AudioAttachment({ attachment, url, voiceContent }) {
 function MediaViewer({ media, onClose }) {
   const viewerRef = useRef(null)
   const videoRef = useRef(null)
+  const [broken, setBroken] = useState(false)
   useDialogTrap(viewerRef, { active: Boolean(media), onClose })
   useEffect(() => {
     if (!media) return undefined
@@ -367,12 +368,16 @@ function MediaViewer({ media, onClose }) {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = previousOverflow }
   }, [media])
+  // A new item is a new file, so the previous one's failure must not carry over.
+  useEffect(() => { setBroken(false) }, [media])
   if (!media) return null
   return (
     <div ref={viewerRef} className="media-viewer" role="dialog" aria-modal="true" aria-label={`${media.kind} viewer`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <header className="media-viewer-toolbar"><strong>{media.name}</strong><button type="button" aria-label="Minimize media viewer" title="Minimize" onClick={onClose}><Minimize2 size={19} /><span>Minimize</span></button></header>
       <div className={`media-viewer-stage media-viewer-${media.kind}`}>
-        {media.kind === 'image' ? <img src={media.url} alt={media.name} /> : <video ref={videoRef} src={media.url} controls playsInline preload="metadata" autoPlay={Boolean(media.autoPlay)} aria-label={media.name} onLoadedMetadata={(event) => { const video = event.currentTarget; if (Number(media.initialTime) > 0) video.currentTime = Number(media.initialTime); if (media.autoPlay) video.play().catch(() => {}) }} />}
+        {media.kind === 'image' ? <img src={media.url} alt={media.name} onError={() => setBroken(true)} /> : <video ref={videoRef} src={media.url} controls playsInline preload="metadata" autoPlay={Boolean(media.autoPlay)} aria-label={media.name} onError={() => setBroken(true)} onLoadedMetadata={(event) => { const video = event.currentTarget; if (Number(media.initialTime) > 0) video.currentTime = Number(media.initialTime); if (media.autoPlay) video.play().catch(() => {}) }} />}
+        {/* A 404 on /media/:id used to be a blank stage, which reads as a broken app rather than a gone file. */}
+        {broken && <p className="feed-failure media-viewer-failure" role="alert"><AlertCircle size={14} />This file could not be opened. It may no longer be on the server.</p>}
       </div>
       {media.kind === 'video' && <a className="media-viewer-download" href={media.url} download={media.name}><Download size={16} /> Download</a>}
     </div>
@@ -912,7 +917,7 @@ function ChatItem({ chat, active, online, onSelect }) {
   )
 }
 
-function ChatList({ chats, activeId, presence, onSelect, onCreate, hasQuery, filter }) {
+function ChatList({ chats, activeId, presence, failure, onSelect, onCreate, hasQuery, filter }) {
   if (!chats.length) {
     const filtered = filter === 'unread' && !hasQuery
     return (
@@ -924,7 +929,13 @@ function ChatList({ chats, activeId, presence, onSelect, onCreate, hasQuery, fil
       </div>
     )
   }
-  return <div className="chat-list">{chats.map((chat) => <ChatItem key={chat.id} chat={chat} active={activeId === chat.id} online={Boolean(presence?.[chat.id])} onSelect={onSelect} />)}</div>
+  return (
+    <>
+      {/* Every room answered "nobody is online" because none could be asked. */}
+      {failure && <p className="feed-failure chat-list-failure" role="alert"><AlertCircle size={14} />{failure}</p>}
+      <div className="chat-list">{chats.map((chat) => <ChatItem key={chat.id} chat={chat} active={activeId === chat.id} online={Boolean(presence?.[chat.id])} onSelect={onSelect} />)}</div>
+    </>
+  )
 }
 
 /** A `self-<uuid>` room belongs to one guest, so deleting it really empties it. */
@@ -1231,6 +1242,9 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   // device holds is the cursor that reaches the page underneath it.
   const [historyCursor, setHistoryCursor] = useState(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hydrating, setHydrating] = useState(true)
+  const [hydrateFailure, setHydrateFailure] = useState('')
+  const [hydrateAttempt, setHydrateAttempt] = useState(0)
   const [connection, setConnection] = useState('Connecting…')
   const [presenceCount, setPresenceCount] = useState(0)
   const [notice, setNotice] = useState('')
@@ -1317,6 +1331,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const searchHasFilter = Boolean(messageSearchText.trim() || messageSearchKind !== 'all' || messageSearchPeriod !== 'all')
   const searchIsActive = messageSearchOpen && searchHasFilter
   const displayedMessages = useMemo(() => searchIsActive ? searchMatches.map((item) => item.message) : visibleMessages, [searchIsActive, searchMatches, visibleMessages])
+  const bodyPhase = transcriptPhase({ hydrating, failure: hydrateFailure, messages: visibleMessages.length, connected: connection === 'Connected' })
 
   const showNotice = (text) => {
     setNotice(text)
@@ -1332,23 +1347,37 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
    * reloads in a room whose server is down now reads their own conversation,
    * which is the behaviour the storage layer exists to buy. The stored cursor is
    * kept because it usually reaches further back than the server's page.
+   *
+   * A read that failed used to be silent, and silence cost more than a missing
+   * message: the cursor stays null, so the only pagination affordance never
+   * renders and the guest is left in a room that looks untouched. It now names
+   * what it could not open, and reads again on request.
    */
   useEffect(() => {
     let active = true
+    setHydrating(true)
+    setHydrateFailure('')
     Promise.all([readMessagePage(chat.id, { limit: LOCAL_HYDRATION_LIMIT }), readRoomState(chat.id)])
       .then(([rows, state]) => {
-        if (!active || !rows.length) return
-        rows.forEach((row) => persistedRef.current.add(row.id))
-        // Only the rows this device does not already have are taken from disk:
-        // whatever the socket delivered arrived after the read started and is
-        // newer than the copy on it, receipts included.
-        setMessages((current) => mergePage(current, rows))
-        setHistoryCursor((current) => olderCursor(current, state?.oldestSeq ?? rows[0].seq))
+        if (!active) return
+        if (rows.length) {
+          rows.forEach((row) => persistedRef.current.add(row.id))
+          // Only the rows this device does not already have are taken from disk:
+          // whatever the socket delivered arrived after the read started and is
+          // newer than the copy on it, receipts included.
+          setMessages((current) => mergePage(current, rows))
+          setHistoryCursor((current) => olderCursor(current, state?.oldestSeq ?? rows[0].seq))
+        }
+        setHydrating(false)
       })
-      .catch(() => { /* no local store, no change: the room behaves the way it always did */ })
+      .catch((reason) => {
+        if (!active) return
+        setHydrating(false)
+        setHydrateFailure(localReadFailure(reason))
+      })
     return () => { active = false }
     // One read per room per guest; the component is keyed on both.
-  }, [chat.id, session.userId])
+  }, [chat.id, session.userId, hydrateAttempt])
 
   /**
    * Writes what the transcript has just learned, in the order it matters.
@@ -2046,7 +2075,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
         <button type="button" className="btn btn-danger" onClick={deleteSelectedForMe} disabled={!selectedIds.size}><Trash2 size={14} /> Delete for me</button>
         <button type="button" className="btn" onClick={toggleSelectMode}>Done</button>
       </div>}
-      <div className="preview-body" ref={previewBodyRef} aria-live="polite">
+      <div className="preview-body" ref={previewBodyRef} aria-live="polite" aria-busy={bodyPhase === 'skeleton'}>
         {historyCursor !== null && !!visibleMessages.length && (
           <div className="room-older-messages">
             <button type="button" className="btn" onClick={loadOlder} disabled={loadingOlder}>
@@ -2054,7 +2083,16 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
             </button>
           </div>
         )}
-        {!visibleMessages.length && connection === 'Connected' && <div className="room-first-message"><MessageCircle size={25} /><strong>{chatSettings.clearedAt ? 'Your history here is cleared' : 'This room is ready'}</strong><span>Say hello to whoever holds the other seat in <b>#{chat.id}</b>.</span></div>}
+        {bodyPhase === 'skeleton' && <>
+          <p className="feed-loading" role="status">Opening this chat from this device…</p>
+          {/* The shapes are decoration; the line above is what a screen reader gets. */}
+          <div className="transcript-skeleton" aria-hidden="true">
+            {Array.from({ length: SKELETON_ROWS }, (row, index) => <span key={index} className={`skeleton-bubble${index % 2 ? ' skeleton-out' : ' skeleton-in'}`} />)}
+          </div>
+        </>}
+        {bodyPhase === 'connecting' && <p className="feed-loading" role="status">Connecting to #{chat.id}…</p>}
+        {hydrateFailure && <p className="feed-failure" role="alert"><AlertCircle size={14} />{hydrateFailure} <button type="button" className="btn" onClick={() => setHydrateAttempt((count) => count + 1)}>Try again</button></p>}
+        {bodyPhase === 'empty' && <div className="room-first-message"><MessageCircle size={25} /><strong>{chatSettings.clearedAt ? 'Your history here is cleared' : 'This room is ready'}</strong><span>Say hello to whoever holds the other seat in <b>#{chat.id}</b>.</span></div>}
         {searchIsActive && displayedMessages.length === 0 && <div className="message-search-empty"><Search size={20} /><strong>No matching messages</strong><span>Try another word, type or date range.</span></div>}
         {displayedMessages.map((message, index) => {
           const previous = displayedMessages[index - 1]
@@ -2343,6 +2381,7 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRead, 
   const [joinDialog, setJoinDialog] = useState(null)
   const [listFilter, setListFilter] = useState('all')
   const [presence, setPresence] = useState({})
+  const [presenceFailure, setPresenceFailure] = useState('')
   const [inboxPaneWidth, setInboxPaneWidth] = useState(null)
   const [isResizing, setIsResizing] = useState(false)
   const gridRef = useRef(null)
@@ -2362,6 +2401,7 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRead, 
   useEffect(() => {
     if (!guest?.userId || !roomIds) {
       setPresence({})
+      setPresenceFailure('')
       return undefined
     }
     const ids = roomIds.split('|').slice(0, PRESENCE_QUERY_LIMIT)
@@ -2373,6 +2413,12 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRead, 
           const next = {}
           ids.forEach((id, index) => { next[id] = results[index].status === 'fulfilled' ? results[index].value : false })
           setPresence(next)
+          // One room refusing to answer is normal; every room refusing to answer
+          // is a server nobody should be reading dots from.
+          const refused = results.filter((result) => result.status === 'rejected').length
+          setPresenceFailure(refused === ids.length && ids.length > 0
+            ? 'Online status could not be checked, so the green dots may be out of date.'
+            : '')
         })
     }
     look()
@@ -2483,7 +2529,7 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRead, 
               </button>
             ))}
           </div>
-          <ChatList chats={filtered} activeId={activeChat?.id} presence={presence} onSelect={openRoom} onCreate={() => setJoinDialog('')} hasQuery={Boolean(query)} filter={listFilter} />
+          <ChatList chats={filtered} activeId={activeChat?.id} presence={presence} failure={presenceFailure} onSelect={openRoom} onCreate={() => setJoinDialog('')} hasQuery={Boolean(query)} filter={listFilter} />
           <button type="button" className="room-fab" aria-label="Create or join a room" onClick={() => setJoinDialog('')}><Plus size={22} /></button>
         </section>
         {activeChat && <div className="split-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize rooms and chat panels" aria-valuemin={340} aria-valuemax={Math.round(maxInboxWidth)} aria-valuenow={Math.round(currentInboxWidth)} aria-valuetext={`${Math.round(currentInboxWidth)} pixels for rooms`} tabIndex={0} onPointerDown={handleResizePointerDown} onPointerMove={handleResizePointerMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onKeyDown={handleResizeKeyDown} onDoubleClick={() => setInboxPaneWidth(null)} />}
