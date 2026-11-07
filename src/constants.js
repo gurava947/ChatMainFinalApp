@@ -123,6 +123,12 @@ const SOCKET_EVENTS = Object.freeze({
   CONNECTION: 'connection',
   MESSAGE: 'message',
   NEW_MESSAGE: 'new_message',
+  /**
+   * A whisper to one member's own channels saying "this room has news". It is
+   * what lets a conversation list badge move for a room the device is not
+   * sitting in, which `new_message` on the room channel never can.
+   */
+  ROOM_ACTIVITY: 'room_activity',
   HISTORY: 'history',
   ROOM_JOIN: 'room:join',
   TYPING: 'typing',

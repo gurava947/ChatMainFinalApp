@@ -61,6 +61,11 @@ const SHORTS_FEED_EXPORTS = [
   'SHORTS_LIMIT', 'clipUrl', 'collectVideoClips',
 ];
 
+/** The composer's emoji list and the caret arithmetic behind picking one. */
+const EMOJI_EXPORTS = [
+  'EMOJI_GROUPS', 'insertAtCaret',
+];
+
 /**
  * The IndexedDB layer. Its surface is long on purpose - every read and write the
  * app performs goes through one of these names, so a test can assert on the same
@@ -153,14 +158,18 @@ function loadTranscript() {
   return loadClientModule('transcript.js', TRANSCRIPT_EXPORTS);
 }
 
+function loadEmoji() {
+  return loadClientModule('emoji.js', EMOJI_EXPORTS);
+}
+
 function loadLocalStore() {
   return loadClientModule('localStore.js', LOCAL_STORE_EXPORTS);
 }
 
 module.exports = {
   loadRoomChat, loadRichCards, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript,
+  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
   NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
-  LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS,
+  LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS,
 };

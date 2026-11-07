@@ -221,8 +221,7 @@
   color: #06211c;
 }
 [data-theme='dark'] .search-wrap.focused { border-color: var(--teal); }
-[data-theme='dark'] .search-wrap input::placeholder,
-[data-theme='dark'] .compose-input::placeholder { color: #b0c4be; opacity: 1; }
+[data-theme='dark'] .search-wrap input::placeholder { color: #b0c4be; opacity: 1; }
 [data-theme='dark'] .chat-meta small { color: #b0c4be; }
 [data-theme='dark'] .bubble-me { color: #f2fffb; }
 [data-theme='dark'] .shorts-coming-soon {
@@ -295,7 +294,7 @@
 .empty-create-button,.welcome-create-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;margin-top:15px;padding:10px 13px;border-radius:11px;background:var(--teal);color:#fff;font-size:11px;font-weight:700;transition:background .18s ease,transform .18s ease}.empty-create-button:hover,.welcome-create-button:hover{background:var(--teal-deep);transform:translateY(-1px)}
 .welcome-create-button{align-self:flex-start;margin:0 0 24px}.welcome-card .welcome-stats{margin-top:2px}.dashboard-heading .eyebrow{margin-bottom:8px}.dashboard-heading .subheading{margin-top:7px}
 .room-modal-backdrop{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:22px;background:rgba(8,19,17,.54);backdrop-filter:blur(7px);animation:room-fade-in .16s ease-out}.room-modal{position:relative;width:min(100%,440px);padding:30px;border:1px solid var(--line);border-radius:24px;background:var(--surface);color:var(--ink);box-shadow:0 28px 90px rgba(0,0,0,.28);animation:room-rise-in .2s ease-out}.room-modal-close{position:absolute;right:16px;top:16px;width:34px;height:34px;display:grid;place-items:center;border-radius:10px;color:var(--muted);background:var(--surface-2)}.room-modal-close:hover{color:var(--teal)}.room-modal-icon{width:46px;height:46px;display:grid;place-items:center;margin-bottom:18px;border-radius:16px;background:color-mix(in srgb,var(--teal) 12%,var(--surface));color:var(--teal)}.room-modal>.eyebrow{margin:0 0 7px}.room-modal h2{margin:0;font:700 25px/1.2 var(--serif);letter-spacing:-.05em}.room-modal-copy{margin:9px 0 20px;color:var(--muted);font-size:12px;line-height:1.65}.room-modal-form{display:grid;gap:14px}.room-modal-form .field{display:grid;gap:7px}.room-modal-form .field>span{font-size:11px;font-weight:700;color:var(--ink)}.room-modal-form .input{width:100%;height:44px;padding:0 13px;border:1px solid var(--line);border-radius:12px;outline:none;background:var(--surface-2);color:var(--ink);font:inherit;font-size:13px;transition:border-color .18s ease,box-shadow .18s ease}.room-modal-form .input::placeholder{color:var(--muted);opacity:.8}.room-modal-form .input:focus{border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 14%,transparent)}.room-name-hint{margin-top:-8px;color:var(--muted);font-size:10px;line-height:1.45}.room-form-error{margin:0;padding:9px 11px;border-radius:10px;background:color-mix(in srgb,#cf6e77 12%,var(--surface));color:#b74854;font-size:11px}.room-submit{width:100%;min-height:43px;display:flex;align-items:center;justify-content:center;gap:7px;margin-top:2px;border:0;border-radius:12px;background:var(--teal);color:#fff;font-size:12px;font-weight:700}.room-submit:hover:not(:disabled){background:var(--teal-deep)}.room-submit:disabled{opacity:.65;cursor:wait}
-.connection-online{color:var(--teal)!important}.connection-offline{color:var(--muted)!important}.room-first-message{align-self:center;display:grid;justify-items:center;gap:8px;margin:auto;padding:28px 20px;text-align:center;color:var(--muted)}.room-first-message svg{color:var(--teal);margin-bottom:5px}.room-first-message strong{color:var(--ink);font:700 16px var(--serif)}.room-first-message span{max-width:270px;font-size:11px;line-height:1.5}.room-first-message b{color:var(--teal)}
+.connection-online{color:var(--accent-text)!important}.connection-offline{color:var(--muted)!important}.room-first-message{align-self:center;display:grid;justify-items:center;gap:8px;margin:auto;padding:28px 20px;text-align:center;color:var(--muted)}.room-first-message svg{color:var(--teal);margin-bottom:5px}.room-first-message strong{color:var(--ink);font:700 16px var(--serif)}.room-first-message span{max-width:270px;font-size:11px;line-height:1.5}.room-first-message b{color:var(--teal)}
 .bubble{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:2px 8px;overflow-wrap:anywhere}.bubble-author{grid-column:1/-1;color:var(--teal);font-size:10px;font-weight:700}.bubble-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere}.bubble-meta{display:flex;align-items:center;justify-self:end;gap:3px;color:var(--muted);font-size:9px;white-space:nowrap}.bubble-failed{outline:1px solid #cf6e77}.bubble-failed .bubble-meta{color:#b74854}.preview-person .connection-offline{color:var(--muted)}
 [data-theme=dark] .room-modal{background:var(--surface);color:var(--ink)}[data-theme=dark] .room-modal-form .input{background:var(--surface-2);color:var(--ink);border-color:var(--line)}[data-theme=dark] .room-form-error{color:#ffd0d2;background:rgba(187,71,83,.2)}[data-theme=dark] .bubble-me .bubble-meta{color:#b7d6cf}[data-theme=dark] .room-modal-icon,[data-theme=dark] .room-add-button{background:#173b36;color:#8ed6c9}
 @keyframes room-fade-in{from{opacity:0}to{opacity:1}}@keyframes room-rise-in{from{opacity:0;transform:translateY(7px) scale(.99)}to{opacity:1;transform:none}}
@@ -464,44 +463,35 @@
 .audio-download-button{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;color:var(--muted)}
 .audio-message-error{border-color:#c95e68}
 
-/* Deep-black theme with matching readable type, controls, icons and user bubbles. */
-html[data-theme='dark']{
-  color-scheme:dark;
-  --bg:#050706;
-  --surface:#0b0e0c;
-  --surface-2:#121714;
-  --ink:#f4f7f5;
-  --muted:#b1beb8;
-  --line:#2b3731;
-  --teal:#63dfc9;
-  --teal-deep:#3fcab2;
-  --shadow:0 18px 55px rgba(0,0,0,.56);
-}
+/*
+ * Dark theme overrides. The palette itself now lives in the token blocks near
+ * the end of this sheet, so these rules name tokens instead of restating hexes:
+ * a theme-specific colour here used to pin the surface back to the old teal.
+ */
 html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .app-shell{background:var(--bg);color:var(--ink)}
-[data-theme='dark'] .preview-body{background:linear-gradient(180deg,#090d0b,#060806)}
-[data-theme='dark'] .bubble-them{background:#111613;border-color:#29352f;color:#f4f7f5}
-[data-theme='dark'] .bubble-me{background:#14372f;border:1px solid #215246;color:#f3fffb}
+[data-theme='dark'] .bubble-them{background:var(--bubble-in);border-color:var(--line);color:var(--ink)}
+[data-theme='dark'] .bubble-me{background:var(--bubble-out);border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));color:var(--bubble-out-ink)}
 [data-theme='dark'] .bubble-me .bubble-text,[data-theme='dark'] .bubble-them .bubble-text{color:inherit}
-[data-theme='dark'] .chat-item.active,[data-theme='dark'] .bottom-nav a.active,[data-theme='dark'] .shorts-badge,[data-theme='dark'] .call-action,[data-theme='dark'] .empty-icon,[data-theme='dark'] .welcome-orb{background:#173b32;color:#a8f6e5}
-[data-theme='dark'] .room-add-button,[data-theme='dark'] .room-modal-icon{background:#16392f;color:#8debd8}
-[data-theme='dark'] .room-submit,[data-theme='dark'] .send-button,[data-theme='dark'] .empty-create-button,[data-theme='dark'] .welcome-create-button,[data-theme='dark'] .location-message-icon{background:#0d8f7e;color:#fff}
-[data-theme='dark'] .message-search-fields select,[data-theme='dark'] .message-search-input{background:#101512;border-color:#303c36;color:#e8f0ec}
-[data-theme='dark'] .message-search-input input{color:#f4f7f5}
-[data-theme='dark'] .message-search-controls button{color:#e4ece8}
-[data-theme='dark'] .message-date-divider span{background:#101512;border-color:#2b3731;color:#d7e1dc}
+[data-theme='dark'] .chat-item.active,[data-theme='dark'] .bottom-nav a.active,[data-theme='dark'] .shorts-badge,[data-theme='dark'] .call-action,[data-theme='dark'] .empty-icon,[data-theme='dark'] .welcome-orb{background:color-mix(in srgb,var(--accent) 18%,var(--surface));color:var(--accent)}
+[data-theme='dark'] .room-add-button,[data-theme='dark'] .room-modal-icon{background:color-mix(in srgb,var(--accent) 16%,var(--surface-2));color:var(--accent)}
+[data-theme='dark'] .room-submit,[data-theme='dark'] .send-button,[data-theme='dark'] .empty-create-button,[data-theme='dark'] .welcome-create-button,[data-theme='dark'] .location-message-icon{background:var(--accent);color:var(--accent-ink)}
+[data-theme='dark'] .message-search-fields select,[data-theme='dark'] .message-search-input{background:var(--surface-2);border-color:var(--line);color:var(--ink)}
+[data-theme='dark'] .message-search-input input{color:var(--ink)}
+[data-theme='dark'] .message-search-controls button{color:var(--ink)}
+[data-theme='dark'] .message-date-divider span{background:var(--surface-2);border-color:var(--line);color:var(--muted)}
 [data-theme='dark'] .bubble mark{background:#715b16;color:#fff1b8}
-[data-theme='dark'] .message-search-current{box-shadow:0 0 0 5px rgba(99,223,201,.12)}
-[data-theme='dark'] .message-status.sent,[data-theme='dark'] .message-status.delivered,[data-theme='dark'] .message-status.pending{color:#afbbb5}
+[data-theme='dark'] .message-search-current{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 14%,transparent)}
+[data-theme='dark'] .message-status.sent,[data-theme='dark'] .message-status.delivered,[data-theme='dark'] .message-status.pending{color:var(--muted)}
 [data-theme='dark'] .message-status.seen{color:#59c7ff}
-[data-theme='dark'] .audio-play-button{background:#0d8f7e;color:#fff}
-[data-theme='dark'] .audio-speed-button{background:#080b09;color:#ecf3ef}
-[data-theme='dark'] .audio-message{background:#111613;border-color:#303c36;color:#f4f7f5}
-[data-theme='dark'] .preview-call-action{background:#101512;color:#e8f0ec}
-[data-theme='dark'] .preview-call-action.is-active{background:#183b33;color:#a8f6e5}
-[data-theme='dark'] .profile-menu,[data-theme='dark'] .attachment-menu,[data-theme='dark'] .call-picker{background:#0b0e0c;color:#f4f7f5}
-[data-theme='dark'] .file-attachment{background:#121714;color:#f4f7f5}
+[data-theme='dark'] .audio-play-button{background:var(--accent);color:var(--accent-ink)}
+[data-theme='dark'] .audio-speed-button{background:var(--surface-2);color:var(--ink)}
+[data-theme='dark'] .audio-message{background:var(--bubble-in);border-color:var(--line);color:var(--ink)}
+[data-theme='dark'] .preview-call-action{background:var(--surface-2);color:var(--ink)}
+[data-theme='dark'] .preview-call-action.is-active{background:color-mix(in srgb,var(--accent) 18%,var(--surface));color:var(--accent)}
+[data-theme='dark'] .profile-menu,[data-theme='dark'] .attachment-menu,[data-theme='dark'] .call-picker{background:var(--elevated);color:var(--ink)}
+[data-theme='dark'] .file-attachment{background:var(--surface-2);color:var(--ink)}
 [data-theme='dark'] .room-form-error{background:rgba(187,71,83,.22);color:#ffd0d2}
-[data-theme='dark'] .chat-meta small,[data-theme='dark'] .search-wrap input::placeholder,[data-theme='dark'] .compose-input::placeholder{color:#b1beb8;opacity:1}
+[data-theme='dark'] .chat-meta small,[data-theme='dark'] .search-wrap input::placeholder{color:var(--muted);opacity:1}
 
 @media(max-width:800px){
   .message-search-toolbar{grid-template-columns:1fr;gap:6px;padding:9px 10px}
@@ -545,8 +535,8 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 
 [data-theme='dark'] .welcome-card,[data-theme='dark'] .shorts-coming-soon{background:var(--surface);color:var(--ink)}
 [data-theme='dark'] .shorts-coming-soon{border-color:var(--line)}
-[data-theme='dark'] .preview-body{background:#070908}
-[data-theme='dark'] .app-header{background:rgba(5,7,6,.94)}
+[data-theme='dark'] .preview-body{background:color-mix(in srgb,var(--bg) 65%,#000)}
+[data-theme='dark'] .app-header{background:color-mix(in srgb,var(--bg) 94%,transparent)}
 
 /* Video messages stay compact in the timeline; play/expand opens the full-screen viewer. */
 .bubble-has-video{width:min(100%,620px);max-width:100%}
@@ -587,7 +577,7 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 .rooms-sheet .btn,.profile-sheet .btn,.profile-note-actions .btn{padding:8px 13px;border-radius:10px;font-size:11px;font-weight:700;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);transition:background .18s ease,color .18s ease}
 .rooms-sheet .btn:hover,.profile-sheet .btn:hover{background:color-mix(in srgb,var(--teal) 12%,var(--surface));color:var(--teal)}
 .btn-primary{background:var(--teal);color:#fff;border-color:var(--teal)}
-.btn-primary:hover:not(:disabled){background:var(--teal-deep);color:#fff}
+.btn-primary:hover:not(:disabled){background:var(--accent-hover);color:var(--accent-ink);border-color:var(--accent-hover)}
 .btn:disabled{opacity:.55;cursor:wait}
 [data-theme='dark'] .menu-confirm{background:#173b36}
 [data-theme='dark'] .menu-danger{color:#ffb3b6!important}
@@ -598,18 +588,18 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 .settings-group-title{display:flex;align-items:center;gap:7px;margin:22px 0 10px;font:700 12px var(--serif);letter-spacing:-.02em;color:var(--ink)}
 .settings-group-title svg{color:var(--teal)}
 .settings-empty,.settings-note{margin:0;color:var(--muted);font-size:10px;line-height:1.55}
-.settings-status{margin:12px 0 0;padding:9px 11px;border-radius:10px;background:color-mix(in srgb,var(--teal) 10%,var(--surface));color:var(--teal-deep);font-size:11px}
+.settings-status{margin:12px 0 0;padding:9px 11px;border-radius:10px;background:color-mix(in srgb,var(--teal) 10%,var(--surface));color:var(--accent-text);font-size:11px}
 .theme-swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .theme-swatch{display:flex;flex-direction:column;align-items:center;gap:6px;padding:9px 6px;border:1px solid var(--line);border-radius:13px;background:var(--surface-2);color:var(--muted);font-size:10px;font-weight:700;transition:border-color .18s ease,transform .18s ease}
 .theme-swatch:hover:not(:disabled){transform:translateY(-1px);color:var(--ink)}
 .theme-swatch.selected{border-color:var(--teal);color:var(--teal)}
 .theme-swatch:disabled{opacity:.6;cursor:wait}
-.theme-swatch-bubble{width:100%;height:26px;border-radius:8px 8px 8px 3px;background:var(--swatch-bubble,#dff5ee);border:1px solid var(--swatch-line,var(--line))}
-.theme-swatch-forest{--swatch-bubble:#d7eee0;--swatch-line:#a8d5b8}
-.theme-swatch-sunset{--swatch-bubble:#fbe3d2;--swatch-line:#f0bfa0}
-.theme-swatch-ocean{--swatch-bubble:#d6e9f8;--swatch-line:#a7cbe9}
-.theme-swatch-midnight{--swatch-bubble:#2b3550;--swatch-line:#1b2236}
-.theme-swatch-paper{--swatch-bubble:#f3efe4;--swatch-line:#ddd6c4}
+.theme-swatch-bubble{width:100%;height:26px;border-radius:8px 8px 8px 3px;background:color-mix(in srgb,var(--swatch-hue,var(--accent)) 22%,var(--surface));border:1px solid color-mix(in srgb,var(--swatch-hue,var(--accent)) 40%,var(--line))}
+.theme-swatch-forest{--swatch-hue:#2f7d4f}
+.theme-swatch-sunset{--swatch-hue:#c4632c}
+.theme-swatch-ocean{--swatch-hue:#256b9c}
+.theme-swatch-midnight{--swatch-hue:#5c86e6}
+.theme-swatch-paper{--swatch-hue:#7a6a45}
 .chat-settings-sheet .btn,.settings-confirm .btn{padding:8px 12px;border-radius:10px;font-size:11px;font-weight:700;background:var(--surface-2);border:1px solid var(--line);color:var(--ink)}
 .chat-settings-sheet .btn:hover:not(:disabled),.settings-confirm .btn:hover:not(:disabled){background:color-mix(in srgb,var(--teal) 12%,var(--surface));color:var(--teal)}
 .btn-danger{color:#b74854!important;border-color:color-mix(in srgb,#cf6e77 40%,var(--line))!important}
@@ -620,7 +610,7 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 .blocked-list strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .blocked-list small{font-size:9px;color:var(--muted)}
 .pairing-code{display:flex;align-items:center;gap:10px;margin-top:8px;padding:10px 12px;border:1px dashed var(--teal);border-radius:13px;background:color-mix(in srgb,var(--teal) 8%,var(--surface))}
-.pairing-code code{flex:1;min-width:0;font:700 16px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.16em;color:var(--teal-deep);word-break:break-all}
+.pairing-code code{flex:1;min-width:0;font:700 16px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.16em;color:var(--accent-text);word-break:break-all}
 .code-input{letter-spacing:.14em;text-transform:uppercase}
 .settings-danger-actions{display:flex;flex-wrap:wrap;gap:8px}
 .settings-confirm{display:flex;gap:8px;align-items:center}
@@ -640,14 +630,41 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 .bubble-author-pop button:hover{color:#b74854;background:color-mix(in srgb,#cf6e77 10%,var(--surface))}
 .bubble-author-pop button:last-child:hover{color:var(--teal);background:color-mix(in srgb,var(--teal) 10%,var(--surface))}
 
-/* Per-chat palettes ride on the panel; the global theme stays the fallback. */
-.chat-theme-forest{--surface-2:#eef6ee;--line:#cfe3d2;--teal:#2f7d4f;--teal-deep:#226140}
-.chat-theme-sunset{--surface-2:#fdf0e6;--line:#f2d6bf;--teal:#c4632c;--teal-deep:#a4511f}
-.chat-theme-ocean{--surface-2:#e9f2fb;--line:#cadff2;--teal:#256b9c;--teal-deep:#1c5580}
-.chat-theme-midnight{--bg:#0d1220;--surface:#161d31;--surface-2:#1c2440;--ink:#e7ebf7;--muted:#93a0c0;--line:#2b3555;--teal:#7aa2ff;--teal-deep:#5c86e6}
-.chat-theme-paper{--surface-2:#f5f1e6;--line:#e0d8c4;--teal:#7a6a45;--teal-deep:#5f5235}
-.chat-theme-midnight .preview-body{background:linear-gradient(180deg,var(--surface-2),var(--surface))}
-[data-theme='dark'] .theme-swatch-paper{--swatch-bubble:#e8e2d2;--swatch-line:#c9c1ab}
+/*
+ * Per-chat palettes ride on the panel; the global theme stays the fallback.
+ *
+ * Each one names only a hue now, and every surface, line, bubble and label is
+ * mixed from that hue against whatever the app theme already decided. The old
+ * rules carried fixed light hexes, which is why a forest room looked right on a
+ * white laptop and put near-black bubbles on a pale green panel everywhere else.
+ * --accent-ink is the one value a mix cannot choose: it is the label on a filled
+ * button, and it is set per hue because the pair that clears AA differs.
+ */
+.chat-theme-forest{--room-hue:#2f7d4f;--room-hue-deep:#226140;--accent-ink:#ffffff}
+.chat-theme-sunset{--room-hue:#c4632c;--room-hue-deep:#a4511f;--accent-ink:#160b04}
+.chat-theme-ocean{--room-hue:#256b9c;--room-hue-deep:#1c5580;--accent-ink:#ffffff}
+.chat-theme-midnight{--room-hue:#5c86e6;--room-hue-deep:#3f66c4;--accent-ink:#0a1020}
+.chat-theme-paper{--room-hue:#7a6a45;--room-hue-deep:#5f5235;--accent-ink:#ffffff}
+
+[class*='chat-theme-']{
+  --teal:var(--room-hue);
+  --teal-deep:var(--room-hue-deep);
+  --accent:var(--room-hue);
+  --accent-deep:var(--room-hue-deep);
+  /* Mixed toward the ambient ink, so green text darkens on white and brightens on black. */
+  --accent-hover:color-mix(in srgb,var(--room-hue) 82%,var(--ink));
+  --accent-text:color-mix(in srgb,var(--room-hue) 66%,var(--ink));
+  --accent-on-tint:color-mix(in srgb,var(--room-hue) 60%,var(--ink));
+  --surface-2:color-mix(in srgb,var(--room-hue) 11%,var(--surface));
+  --elevated:color-mix(in srgb,var(--room-hue) 15%,var(--surface));
+  --line:color-mix(in srgb,var(--room-hue) 26%,var(--line));
+  --bubble-in:color-mix(in srgb,var(--room-hue) 12%,var(--elevated));
+  --bubble-out:color-mix(in srgb,var(--accent) 45%,var(--surface));
+  --bubble-out-ink:var(--ink);
+  --bubble-out-meta:color-mix(in srgb,var(--ink) 74%,var(--bubble-out));
+  --bubble-in-meta:color-mix(in srgb,var(--muted) 60%,var(--ink));
+}
+[class*='chat-theme-'] .preview-body{background:color-mix(in srgb,var(--room-hue) 7%,var(--surface))}
 
 /* ---------- P3 profiles, pictures and sender avatars ---------- */
 .avatar img,.profile-avatar img,.bubble-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
@@ -851,4 +868,361 @@ body{min-width:0}
   .call-row-actions{grid-column:3;grid-row:1 / span 2;align-self:center}
 }
 .room-older-messages{display:grid;justify-items:center;padding:6px 0 14px}
-.room-older-messages .btn{font-size:11px}
+.room-older-messages .btn{padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);font-size:11px;font-weight:600}
+.room-older-messages .btn:hover:not(:disabled){border-color:var(--accent-text);color:var(--accent-text)}
+
+/* ---------- P8 reference palette and theme tokens ---------- */
+
+/*
+ * The reference design is dark, so dark is the default instead of an opt-in:
+ * `:root` carries the dark values and `[data-theme='light']` overrides them,
+ * which keeps the frame painted before React runs the right one.
+ *
+ * `--teal` and `--teal-deep` are kept as aliases rather than renamed, because
+ * most of the stylesheet already names them; re-pointing those two moves the
+ * whole app at once instead of layering a green accent over a teal one. The
+ * colours themselves are sampled from the reference image, and every pair below
+ * clears WCAG AA against the surface it sits on - the accent is the one thing
+ * that used to be hardcoded 68 times.
+ */
+:root {
+  color-scheme: dark;
+  --bg: #0b0d0c;
+  --surface: #131416;
+  --surface-2: #17181a;
+  --elevated: #1a1b1d;
+  --ink: #e9eef1;
+  --muted: #9aa8a0;
+  --line: #23262a;
+  --accent: #16c445;
+  --accent-deep: #0d8f31;
+  --accent-ink: #04150a;
+  --bubble-in: var(--elevated);
+  --bubble-out: color-mix(in srgb, var(--accent) 45%, var(--surface));
+  --bubble-out-ink: #eafff0;
+  --bubble-out-meta: #a8e6b3;
+  --teal: var(--accent);
+  --teal-deep: var(--accent-deep);
+  --shadow: 0 18px 55px rgba(0, 0, 0, .5);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0b0d0c;
+  --surface: #131416;
+  --surface-2: #17181a;
+  --elevated: #1a1b1d;
+  --ink: #e9eef1;
+  --muted: #9aa8a0;
+  --line: #23262a;
+  --accent: #16c445;
+  --accent-deep: #0d8f31;
+  --accent-ink: #04150a;
+  --bubble-in: var(--elevated);
+  --bubble-out: color-mix(in srgb, var(--accent) 45%, var(--surface));
+  --bubble-out-ink: #eafff0;
+  --bubble-out-meta: #a8e6b3;
+  --teal: var(--accent);
+  --teal-deep: var(--accent-deep);
+  --shadow: 0 18px 55px rgba(0, 0, 0, .5);
+}
+
+/*
+ * Light is derived, not supplied: the reference only shows the dark app, so the
+ * same hue family is lifted onto white and the accent is darkened until white
+ * label text on it passes AA, which the brighter dark-mode green cannot.
+ */
+[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f7f5;
+  --surface: #ffffff;
+  --surface-2: #f8faf9;
+  --elevated: #ffffff;
+  --ink: #182224;
+  --muted: #5f726c;
+  --line: #e4ebe7;
+  --accent: #087d2e;
+  --accent-deep: #065c22;
+  --accent-ink: #ffffff;
+  --bubble-in: var(--surface);
+  --bubble-out: color-mix(in srgb, var(--accent) 16%, #ffffff);
+  --bubble-out-ink: #10241a;
+  --bubble-out-meta: #3f6b4a;
+  --teal: var(--accent);
+  --teal-deep: var(--accent-deep);
+  --shadow: 0 18px 55px rgba(27, 65, 56, .07);
+}
+
+/*
+ * Two accents the two themes cannot share one value for: the pressed state has
+ * to move toward the eye on a dark surface and away from it on white, and green
+ * used as text size needs the bright member of the family in dark, the deep one
+ * in light. White-on-green was the old assumption and it does not survive here.
+ */
+:root,
+[data-theme='dark'] {
+  --accent-hover: color-mix(in srgb, var(--accent) 78%, #ffffff);
+  --accent-text: color-mix(in srgb, var(--accent) 78%, #ffffff);
+  --accent-on-tint: var(--accent);
+  --bubble-in-meta: var(--muted);
+}
+
+[data-theme='light'] {
+  --accent-hover: var(--accent-deep);
+  --accent-text: var(--accent);
+  --accent-on-tint: var(--accent-deep);
+  --bubble-in-meta: var(--muted);
+}
+
+[data-theme='light'] .welcome-orb { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--accent-on-tint); }
+
+body { background: var(--bg); color: var(--ink); }
+.app-header { background: color-mix(in srgb, var(--bg) 88%, transparent); }
+
+.bubble-me { background: var(--bubble-out); color: var(--bubble-out-ink); }
+.bubble-them { background: var(--bubble-in); border-color: var(--line); }
+.bubble-me .bubble-meta { color: var(--bubble-out-meta); }
+.bubble-them .bubble-meta { color: var(--bubble-in-meta); }
+
+.chat-item:hover { background: var(--surface-2); }
+.chat-item.active { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.chat-meta small { color: var(--muted); }
+.chat-meta b { background: var(--accent); color: var(--accent-ink); }
+.online-dot { background: var(--accent); }
+
+.bottom-nav a.active { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent-on-tint); }
+.send-button { background: var(--accent); color: var(--accent-ink); }
+.updates-add-button { background: var(--accent); color: var(--accent-ink); }
+.search-wrap.focused { border-color: var(--accent); }
+.welcome-card { background: radial-gradient(circle at 82% 13%, color-mix(in srgb, var(--accent) 14%, var(--surface)) 0, transparent 30%), var(--surface); }
+
+/*
+ * The earlier dark block names these with an attribute selector, so it outranks
+ * the plain rules above; restated here to keep the accent from reverting to the
+ * old teal tint on exactly the surfaces the reference shows.
+ */
+[data-theme='dark'] .bubble-me { background: var(--bubble-out); color: var(--bubble-out-ink); }
+[data-theme='dark'] .chat-item.active,
+[data-theme='dark'] .bottom-nav a.active,
+[data-theme='dark'] .shorts-badge,
+[data-theme='dark'] .call-action,
+[data-theme='dark'] .empty-icon,
+[data-theme='dark'] .welcome-orb {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--accent);
+}
+[data-theme='dark'] .updates-add-button,
+[data-theme='dark'] .send-button { color: var(--accent-ink); }
+[data-theme='dark'] .search-wrap.focused { border-color: var(--accent); }
+[data-theme='dark'] .chat-meta small { color: var(--muted); }
+[data-theme='dark'] .welcome-card { background: radial-gradient(circle at 82% 13%, color-mix(in srgb, var(--accent) 14%, var(--surface)) 0, transparent 31%), var(--surface); }
+
+/* A ring the accent carries, on every control that can take focus. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Every control that fills itself with the accent and writes a label on top.
+ * White-on-teal was already marginal, and white-on-green is far worse, so the
+ * label colour travels with the theme instead of being fixed: dark ink on the
+ * bright dark-mode green, white on the deep light-mode one.
+ */
+.btn-primary,
+.call-action-primary,
+.empty-create-button,
+.welcome-create-button,
+.location-message-icon,
+.bubble-avatar,
+.profile-avatar,
+.room-submit,
+.round-action,
+.shorts-badge,
+.status-post,
+.updates-add-button {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ---------- P9 conversation list, to the reference ---------- */
+
+/*
+ * The reference rows are flat, separated by a hairline, and carry four things:
+ * who, what was last said, when, and how much is waiting. The pill rows the app
+ * had before were a different design language, so the list moves to the
+ * reference shape while keeping the same markup and the same click target.
+ */
+.chat-list { margin-top: 4px; }
+.chat-item {
+  gap: 12px;
+  width: 100%;
+  min-height: 62px;
+  padding: 10px 8px;
+  border-radius: 14px;
+  text-align: left;
+  transition: background .16s ease;
+}
+.chat-item + .chat-item { border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.chat-topline strong { font-size: 14.5px; font-weight: 600; letter-spacing: -.012em; }
+.chat-preview { font-size: 12.5px; }
+.chat-meta small { font-size: 11px; color: var(--muted); }
+.chat-meta b {
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+.avatar, .avatar-sm { border-radius: 50%; }
+.online-dot { width: 11px; height: 11px; border-width: 2.5px; background: var(--accent); }
+
+/* Filter chips: the chosen one is filled, the rest are outlined. */
+.list-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.list-filters::-webkit-scrollbar { display: none; }
+.list-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 15px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: color .16s ease, background .16s ease, border-color .16s ease;
+}
+.list-filter:hover { color: var(--ink); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.list-filter.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.list-filter-count {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-ink) 16%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+}
+.list-filter:not(.active) .list-filter-count { background: var(--accent); color: var(--accent-ink); }
+
+/* The compose action the reference puts under the thumb, on touch layouts. */
+.room-fab { display: none; }
+@media(max-width:800px) {
+  .room-fab {
+    position: fixed;
+    z-index: 6;
+    right: 18px;
+    bottom: 92px;
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-ink);
+    box-shadow: 0 14px 30px rgba(0, 0, 0, .38);
+  }
+  .room-fab:active { transform: scale(.94); }
+  .chat-open .room-fab { display: none; }
+}
+
+/* The default avatar carried the old teal; it now belongs to the accent family. */
+.avatar-teal { background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 72%, #d9ffe4), color-mix(in srgb, var(--accent-deep) 82%, #04240f)); }
+
+/* ---------- P10 the conversation, to the reference ---------- */
+/*
+ * The reference conversation screen is quiet: a header of bare icons with no
+ * boxes around them, one avatar that says whether the other person is there,
+ * bubbles that carry their own corner, and a composer that is a single pill
+ * ending in one filled circle. No control was dropped to get there - search,
+ * select, settings and both call buttons keep their exact handlers.
+ */
+.preview-top{padding:10px 14px;border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent);gap:10px}
+.preview-back{display:grid;place-items:center;flex:0 0 34px;width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:var(--ink)}
+.preview-back:hover{background:var(--surface-2)}
+.preview-person strong{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.preview-person span{font-size:11.5px}
+.preview-actions{gap:2px}
+.preview-call-action{width:38px;height:38px;border:0;border-radius:50%;background:transparent;color:var(--muted)}
+.preview-call-action:hover:not(:disabled){background:var(--surface-2);color:var(--ink);transform:none}
+.preview-actions .preview-call-action.is-active{border:0;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent-text)}
+
+.preview-body{padding:18px 20px 22px;gap:9px}
+.bubble{max-width:min(76%,560px);padding:7px 11px 6px;border:0;border-radius:16px;font-size:13.5px;line-height:1.45}
+.bubble-them{border-top-left-radius:6px}
+.bubble-me{border-top-right-radius:6px}
+[data-theme='dark'] .bubble-me,[data-theme='dark'] .bubble-them{border:0}
+/* Two rows from one person read as one block: the corner only turns on the first. */
+.bubble-grouped{margin-top:-6px;border-radius:16px}
+.bubble-grouped.bubble-them{border-top-left-radius:16px}
+.bubble-grouped.bubble-me{border-top-right-radius:16px}
+.bubble-text{font-size:13.5px}
+.bubble-meta{margin-top:2px;gap:4px;font-size:10.5px}
+.bubble-author{margin:0 0 3px;font-size:10.5px;font-weight:600;color:var(--accent-on-tint)}
+.bubble-avatar{width:16px;height:16px;font-size:8px}
+.message-date-divider{margin:12px 0 4px}
+.message-date-divider::before,.message-date-divider::after{display:none}
+.message-date-divider span{padding:5px 12px;border:0;border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.02em}
+
+/*
+ * The composer pill holds the emoji trigger, the field and the attach menu; the
+ * accent circle outside it is the mic while the draft is empty and the send
+ * arrow the moment it is not. One affordance at a time, because the mockup's
+ * green circle is the loudest thing on the screen and two of them are not.
+ */
+.preview-compose{gap:8px;padding:10px 14px calc(12px + env(safe-area-inset-bottom))}
+.compose-controls{gap:8px}
+.compose-field{display:flex;align-items:center;gap:2px;flex:1;min-width:0;height:46px;padding:0 6px;border:1px solid var(--line);border-radius:23px;background:var(--surface-2)}
+.compose-field:focus-within{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 13%,transparent)}
+.compose-input{flex:1;min-width:0;height:auto;padding:0 6px;border:0;border-radius:0;background:transparent;font-size:13.5px}
+.compose-input:focus{border:0;box-shadow:none}
+/* Chrome's own placeholder grey is the one text colour the token system cannot vouch for. */
+.compose-input::placeholder{color:color-mix(in srgb,var(--muted) 82%,var(--ink));opacity:1}
+.emoji-wrap{position:relative;flex:0 0 34px;display:grid;place-items:center}
+.emoji-toggle{display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:var(--muted)}
+.emoji-toggle:hover{background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent-text)}
+.emoji-sheet{position:absolute;bottom:calc(100% + 10px);left:0;z-index:14;width:min(320px,calc(100vw - 40px));max-height:min(300px,45vh);overflow-y:auto;padding:10px;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 16px 40px rgba(0,0,0,.28);animation:drop .16s ease-out}
+.emoji-group + .emoji-group{margin-top:8px;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.emoji-group strong{display:block;margin:0 4px 6px;color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.emoji-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:2px}
+.emoji-grid button{display:grid;place-items:center;aspect-ratio:1;border:0;border-radius:9px;background:transparent;font-size:19px;line-height:1}
+.emoji-grid button:hover{background:var(--surface-2)}
+.attach-wrap{flex:0 0 34px;width:34px;height:34px}
+.attach-button{width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:transparent;color:var(--muted)}
+.attach-button:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent-text);transform:none}
+.attachment-menu{left:0;bottom:44px}
+.send-button,.voice-record-button{width:44px;height:44px;flex:0 0 44px;border-radius:50%;background:var(--accent);color:var(--accent-ink)}
+.send-button:hover:not(:disabled),.voice-record-button:hover:not(:disabled){background:var(--accent-hover);color:var(--accent-ink);transform:translateY(-1px)}

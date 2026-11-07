@@ -406,13 +406,36 @@ class ChatService {
     const viewers = await this.store.roomUsers(room, this.config.presenceTtlMs);
 
     const muted = [];
+    const mutedUsers = new Set();
     for (const userId of viewers) {
       if (userId === message.userId) continue;
-      if (await this.isBlockedBy(userId, message.userId)) muted.push(userRoom(userId));
+      if (await this.isBlockedBy(userId, message.userId)) {
+        muted.push(userRoom(userId));
+        mutedUsers.add(userId);
+      }
     }
 
     const operator = muted.length ? this.io.to(room).except(muted) : this.io.to(room);
     operator.emit(SOCKET_EVENTS.NEW_MESSAGE, payload);
+
+    /**
+     * The room channel only reaches sockets that joined that room, so a member
+     * reading a different conversation never learns this one has news - and a
+     * conversation list cannot badge what it has not heard about. Every member
+     * also sits in a personal channel, so the same payload goes there too.
+     * The roster, not the live viewer list, decides who that is: a member with
+     * no socket in this room is still a member. The recipient is on the roster,
+     * so this carries nothing they could not read by opening the room, and a
+     * member who blocked the author is filtered out exactly as on the room
+     * channel.
+     */
+    const roster = await this.store.getRoomRoster(room).catch(() => null);
+    const members = roster ? [roster.owner, roster.guest].filter(Boolean) : viewers;
+    for (const userId of members) {
+      if (userId === message.userId || mutedUsers.has(userId)) continue;
+      if (await this.isBlockedBy(userId, message.userId)) continue;
+      this.io.to(userRoom(userId)).emit(SOCKET_EVENTS.ROOM_ACTIVITY, payload);
+    }
   }
 
   async isBlockedBy(viewerId, authorId) {

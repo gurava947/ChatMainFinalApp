@@ -2,14 +2,14 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { createPortal } from 'react-dom'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import {
-  AlertCircle, ArrowDownLeft, ArrowLeft, ArrowUpRight, Ban, Bell, CalendarDays, Check, CheckCheck, ChevronLeft,
+  AlertCircle, ArrowDownLeft, ArrowLeft, ArrowUpRight, Ban, Bell, CalendarDays, Camera, Check, CheckCheck, ChevronLeft,
   ChevronRight, CircleUserRound, Clock3, Download, Ellipsis, Eye, FileText, Image, ListChecks, MapPin, Maximize2,
-  Menu, MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, Search, Send, Settings2, Sparkles, Square, Sun, Trash2, Users, Video, VideoOff, X,
+  Menu, MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, Search, Send, Settings2, Smile, Sparkles, Square, Sun, Trash2, Users, Video, VideoOff, X,
 } from 'lucide-react'
 import {
   authorizeRoom, blockGuest, CHAT_THEMES, checkRoomAccess, clearCallHistory, clearChatForMe, clearGuest, connectFeed, connectRoom, deleteChatForMe,
   deleteMessagesForMe, deleteStatus, fetchCallHistory, fetchChatSettings, fetchMyProfile, fetchProfiles,
-  fetchRoomMessages, fetchRoomRoster, fetchStatuses, fetchStatusViewers, forgetRoom, markStatusSeen, normalizeRoomName, postMediaStatus,
+  fetchRoomMessages, fetchRoomPresence, fetchRoomRoster, fetchStatuses, fetchStatusViewers, forgetRoom, markStatusSeen, normalizeRoomName, postMediaStatus,
   postTextStatus, readGuest, readRooms, removeAvatar, resolveGuest, roomSummary, rotateRoomInvite, saveGuest, saveNote, saveRoomTheme,
   saveRooms, sessionHeaders, unblockGuest, uploadAvatar, uploadStatusMedia,
 } from './roomChat'
@@ -17,6 +17,7 @@ import {
   buildContactContent, buildEventContent, buildPollContent, contactLinks, icsForEvent, pollOutcome,
 } from './richCards'
 import { prepareFiles, readHdPreference, saveHdPreference } from './mediaPrepare'
+import { EMOJI_GROUPS, insertAtCaret } from './emoji'
 import {
   callDuration, clampToViewport, defaultFrame, dragDelta, frameStyle, movedFrame, pointerPoint,
   readWindowMode, resizedFrame, saveWindowFrame, saveWindowMode, viewportSize,
@@ -47,6 +48,43 @@ const navItems = [
   { to: '/shorts', label: 'Short Videos', icon: Play },
   { to: '/calls', label: 'Calls', icon: Phone },
 ]
+
+/**
+ * Presence is polled per room, so the list caps how many rooms it asks about and
+ * how often. A device with forty rooms should not spend forty requests every
+ * few seconds; the rows you can see are the rows that get a dot.
+ */
+const PRESENCE_QUERY_LIMIT = 12
+const PRESENCE_REFRESH_MS = 45000
+
+/**
+ * The reference shows four chips; two of them have nothing to filter on here.
+ * A room holds two people, so "Groups" would always be empty, and nothing in
+ * the app marks a favourite. Both would need data the server does not keep,
+ * so the list offers the filters that describe real rooms instead of four
+ * buttons where two of them lie.
+ */
+const LIST_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'unread', label: 'Unread' },
+]
+
+/**
+ * The stored choice wins; a device that has never been asked gets the theme its
+ * owner already picked in the OS. Defaulting to light instead meant a first run
+ * showed a palette nobody chose, and the reference design is a dark one.
+ */
+function readThemePreference() {
+  let stored = null
+  try {
+    stored = localStorage.getItem('inchat-theme')
+  } catch (err) {
+    return true
+  }
+  if (stored === 'dark') return true
+  if (stored === 'light') return false
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true
+}
 
 let overlayHistoryId = 0
 
@@ -773,25 +811,39 @@ function SearchBar({ value, onChange, count }) {
   )
 }
 
-function Avatar({ chat, small = false }) {
-  return <div className={`avatar ${small ? 'avatar-sm' : ''} avatar-${chat.color || 'teal'}`}>{chat.initials}{chat.online && <i className="online-dot" />}</div>
+function Avatar({ chat, small = false, online = chat.online }) {
+  return <div className={`avatar ${small ? 'avatar-sm' : ''} avatar-${chat.color || 'teal'}`}>{chat.initials}{online && <i className="online-dot" aria-hidden="true" />}</div>
 }
 
-function ChatItem({ chat, active, onSelect }) {
+function ChatItem({ chat, active, online, onSelect }) {
+  const unread = chat.unread || 0
   return (
-    <button className={`chat-item ${active ? 'active' : ''}`} onClick={() => onSelect(chat)} aria-current={active ? 'true' : undefined}>
-      <Avatar chat={chat} />
+    <button
+      className={`chat-item ${active ? 'active' : ''}`}
+      onClick={() => onSelect(chat)}
+      aria-current={active ? 'true' : undefined}
+      aria-label={unread ? `${chat.name}, ${unread} unread ${unread === 1 ? 'message' : 'messages'}` : chat.name}
+    >
+      <Avatar chat={chat} online={online} />
       <span className="chat-copy"><span className="chat-topline"><strong>{chat.name}</strong>{chat.pinned && <Pin size={13} className="pin-icon" />}</span><span className="chat-preview">{chat.message || 'Room is ready — say hello.'}</span></span>
-      <span className="chat-meta"><small>{chat.time || ''}</small>{chat.unread > 0 && <b>{chat.unread}</b>}</span>
+      <span className="chat-meta"><small>{chat.time || ''}</small>{unread > 0 && <b aria-hidden="true">{unread > 99 ? '99+' : unread}</b>}</span>
     </button>
   )
 }
 
-function ChatList({ chats, activeId, onSelect, onCreate, hasQuery }) {
+function ChatList({ chats, activeId, presence, onSelect, onCreate, hasQuery, filter }) {
   if (!chats.length) {
-    return <div className="empty-state"><div className="empty-icon"><Search size={21} /></div><h3>{hasQuery ? 'No rooms found' : 'No rooms yet'}</h3><p>{hasQuery ? 'Try a different room name.' : 'Create a room or join one by name to start chatting.'}</p>{!hasQuery && <button className="empty-create-button" type="button" onClick={onCreate}><Plus size={15} /> Create or join a room</button>}</div>
+    const filtered = filter === 'unread' && !hasQuery
+    return (
+      <div className="empty-state">
+        <div className="empty-icon">{hasQuery || filtered ? <Search size={21} /> : <MessageCircle size={21} />}</div>
+        <h3>{hasQuery ? 'No rooms found' : filtered ? 'Nothing unread' : 'No rooms yet'}</h3>
+        <p>{hasQuery ? 'Try a different room name.' : filtered ? 'Every room on this device is caught up.' : 'Create a room or join one by name to start chatting.'}</p>
+        {!hasQuery && !filtered && <button className="empty-create-button" type="button" onClick={onCreate}><Plus size={15} /> Create or join a room</button>}
+      </div>
+    )
   }
-  return <div className="chat-list">{chats.map((chat) => <ChatItem key={chat.id} chat={chat} active={activeId === chat.id} onSelect={onSelect} />)}</div>
+  return <div className="chat-list">{chats.map((chat) => <ChatItem key={chat.id} chat={chat} active={activeId === chat.id} online={Boolean(presence?.[chat.id])} onSelect={onSelect} />)}</div>
 }
 
 /** A `self-<uuid>` room belongs to one guest, so deleting it really empties it. */
@@ -1086,6 +1138,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const [notice, setNotice] = useState('')
   const [socket, setSocket] = useState(null)
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
+  const [emojiOpen, setEmojiOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [recording, setRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
@@ -1123,18 +1176,22 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   useEffect(() => { onLatestMessageRef.current = onLatestMessage }, [onLatestMessage])
   const galleryInputRef = useRef(null)
   const fileInputRef = useRef(null)
+  /** `capture` asks the phone for its camera instead of its library. */
+  const cameraInputRef = useRef(null)
+  const composeInputRef = useRef(null)
   const recorderRef = useRef(null)
   const recordingStreamRef = useRef(null)
   const recordingChunksRef = useRef([])
   const recordingStartRef = useRef(0)
   const calls = useRoomCalls(socket, chat.id, session)
-  const chatOverlayOpen = attachmentMenuOpen || calls.pickerMode || messageSearchOpen || settingsOpen || Boolean(richSheet) || Boolean(mediaViewer)
+  const chatOverlayOpen = attachmentMenuOpen || emojiOpen || calls.pickerMode || messageSearchOpen || settingsOpen || Boolean(richSheet) || Boolean(mediaViewer)
   useBackDismiss(chatOverlayOpen, () => {
     if (mediaViewer) setMediaViewer(null)
     else if (richSheet) setRichSheet(null)
     else if (settingsOpen) setSettingsOpen(false)
     else if (messageSearchOpen) setMessageSearchOpen(false)
     else if (calls.pickerMode) calls.closePicker()
+    else if (emojiOpen) setEmojiOpen(false)
     else setAttachmentMenuOpen(false)
   })
   /**
@@ -1832,20 +1889,43 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     }
   }
 
-  const subtitle = connection === 'Connected' && presenceCount > 1 ? `${presenceCount} people in this room` : connection
+  /**
+   * The reference writes "Online" under a name, and the only honest source for
+   * that here is the room's own socket roster: the server counts the members it
+   * can see in this room, you included. Two of them means the other seat is
+   * awake; one means nobody else is reading.
+   */
+  const peerOnline = connection === 'Connected' && presenceCount > 1
+  /**
+   * The picker takes focus when it opens, so the caret it reads is the one the
+   * field last reported and the field has to be handed the caret back.
+   */
+  const pickEmoji = (glyph) => {
+    const field = composeInputRef.current
+    const { value, caret } = insertAtCaret(draft, field?.selectionStart, field?.selectionEnd, glyph)
+    if (value.length > 20000) return
+    setDraft(value)
+    setEmojiOpen(false)
+    window.requestAnimationFrame(() => {
+      if (!field) return
+      field.focus()
+      field.setSelectionRange(caret, caret)
+    })
+  }
+
+  const subtitle = connection !== 'Connected' ? connection : peerOnline ? 'Online' : 'Only you in this room'
 
   return (
     <section className={`chat-preview-panel${chatSettings.theme !== 'default' ? ` chat-theme-${chatSettings.theme}` : ''}`}>
       <div className="preview-top">
         <button className="preview-back" aria-label="Back to rooms" onClick={onClose}><ArrowLeft size={20} /></button>
-        <div className="preview-person"><Avatar chat={chat} small /><div><strong>{chat.name}</strong><span className={connection === 'Connected' ? 'connection-online' : 'connection-offline'}>{subtitle}</span></div></div>
+        <div className="preview-person"><Avatar chat={chat} small online={peerOnline} /><div><strong>{chat.name}</strong><span className={connection === 'Connected' ? 'connection-online' : 'connection-offline'}>{subtitle}</span></div></div>
         <div className="preview-actions">
           <button className={`preview-call-action${messageSearchOpen ? ' is-active' : ''}`} aria-label="Search messages in this room" title="Search this room" aria-pressed={messageSearchOpen} onClick={() => { setMessageSearchOpen((open) => !open); setMessageSearchIndex(0) }}><Search size={17} /></button>
           <button className={`preview-call-action${selectMode ? ' is-active' : ''}`} aria-label="Select messages to delete for me" title="Select messages" aria-pressed={selectMode} onClick={toggleSelectMode}><ListChecks size={17} /></button>
           <button className={`preview-call-action${settingsOpen ? ' is-active' : ''}`} aria-label="Chat settings" title="Chat settings" onClick={() => setSettingsOpen((open) => !open)}><Settings2 size={17} /></button>
           <button className="preview-call-action" aria-label="Start video call" title="Start video call" onClick={() => calls.openPicker('video')} disabled={Boolean(calls.call)}><Video size={18} /></button>
           <button className="preview-call-action" aria-label="Start audio call" title="Start audio call" onClick={() => calls.openPicker('audio')} disabled={Boolean(calls.call)}><Phone size={18} /></button>
-          <button className="icon-button preview-close" aria-label="Close room" onClick={onClose}><X size={18} /></button>
         </div>
         {calls.pickerMode && <div className="call-picker" role="dialog" aria-label={`Choose someone for an ${calls.pickerMode} call`}>
           <div className="call-picker-head"><strong>Start {calls.pickerMode} call</strong><button type="button" aria-label="Close" onClick={calls.closePicker}><X size={16} /></button></div>
@@ -1879,16 +1959,24 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
         {displayedMessages.map((message, index) => {
           const previous = displayedMessages[index - 1]
           const startsNewDay = !previous || !sameMessageDay(previous.ts, message.ts)
+          /**
+           * A run of messages from one person is one turn, not three name tags.
+           * The reference writes no name inside the bubbles at all; the name here
+           * also carries the block control, so it stays on the row that opens the
+           * run and the rows under it group tight against it.
+           */
+          const showAuthor = message.sender === 'them' && (startsNewDay || !previous || previous.userId !== message.userId)
+          const grouped = Boolean(previous) && !startsNewDay && previous.sender === message.sender && previous.userId === message.userId
           const hasVideo = message.attachments?.some((attachment) => attachment.kind === 'video')
           const hasImage = message.attachments?.some((attachment) => attachment.kind === 'image')
           const isSearchMatch = searchIsActive && searchMatches.some((item) => item.message.id === message.id)
           const isCurrentSearchMatch = searchIsActive && searchMatches[Math.min(messageSearchIndex, Math.max(0, searchMatches.length - 1))]?.message.id === message.id
           return <Fragment key={message.id}>
             {startsNewDay && <div className="message-date-divider"><span>{formatMessageDay(message.ts)}</span></div>}
-            <div ref={(node) => { if (node) messageNodesRef.current.set(String(message.id), node); else messageNodesRef.current.delete(String(message.id)) }} data-message-id={message.id} data-user-id={message.userId || ''} className={`bubble bubble-${message.sender}${message.failed ? ' bubble-failed' : ''}${hasVideo ? ' bubble-has-video' : ''}${hasImage ? ' bubble-has-image' : ''}${isSearchMatch ? ' message-search-match' : ''}${isCurrentSearchMatch ? ' message-search-current' : ''}${selectMode && selectedIds.has(message.id) ? ' message-selected' : ''}`}>
+            <div ref={(node) => { if (node) messageNodesRef.current.set(String(message.id), node); else messageNodesRef.current.delete(String(message.id)) }} data-message-id={message.id} data-user-id={message.userId || ''} className={`bubble bubble-${message.sender}${grouped ? ' bubble-grouped' : ''}${message.failed ? ' bubble-failed' : ''}${hasVideo ? ' bubble-has-video' : ''}${hasImage ? ' bubble-has-image' : ''}${isSearchMatch ? ' message-search-match' : ''}${isCurrentSearchMatch ? ' message-search-current' : ''}${selectMode && selectedIds.has(message.id) ? ' message-selected' : ''}`}>
               {selectMode && <button type="button" className="bubble-select-box" role="checkbox" aria-checked={selectedIds.has(message.id)} aria-label={`Select ${message.author || 'this message'} for deletion`} onClick={() => toggleSelected(message.id)}>{selectedIds.has(message.id) ? <Check size={13} /> : <span />}</button>}
-              {message.sender === 'them' && <small className="bubble-author"><AvatarFace className="bubble-avatar" src={profiles[message.userId]?.avatar?.url} initials={initialsOf(message.author, '#')} />{highlightText(message.author, searchIsActive ? messageSearchText : '')}<button type="button" className="bubble-author-menu" aria-label={`Options for ${message.author}`} onClick={() => setAuthorMenu({ userId: message.userId, displayName: message.author })}><Ellipsis size={13} /></button></small>}
-              {authorMenu && authorMenu.userId === message.userId && <div className="bubble-author-pop" role="menu">
+              {showAuthor && <small className="bubble-author"><AvatarFace className="bubble-avatar" src={profiles[message.userId]?.avatar?.url} initials={initialsOf(message.author, '#')} />{highlightText(message.author, searchIsActive ? messageSearchText : '')}<button type="button" className="bubble-author-menu" aria-label={`Options for ${message.author}`} onClick={() => setAuthorMenu({ userId: message.userId, displayName: message.author })}><Ellipsis size={13} /></button></small>}
+              {showAuthor && authorMenu && authorMenu.userId === message.userId && <div className="bubble-author-pop" role="menu">
                 <button type="button" role="menuitem" onClick={() => blockThisGuest(authorMenu)}><Ban size={14} /> Block {authorMenu.displayName || 'this guest'}</button>
                 <button type="button" role="menuitem" onClick={() => setAuthorMenu(null)}>Cancel</button>
               </div>}
@@ -1910,22 +1998,37 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
         {uploading && <p className="uploading-indicator" role="status">Uploading media…</p>}
         {recording && <p className="recording-indicator" role="status"><i /> Recording voice · {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, '0')} — tap the mic to send</p>}
         <form className="compose-controls" onSubmit={sendMessage}>
-          <div className="attach-wrap">
-            <button type="button" className="attach-button" aria-label="Add an attachment" aria-expanded={attachmentMenuOpen} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading}><Plus size={21} /></button>
-            {attachmentMenuOpen && <div className="attachment-menu" role="menu">
-              <button type="button" role="menuitem" onClick={() => { galleryInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Image size={17} /><span>Photos & videos</span></button>
-              <button type="button" role="menuitem" onClick={() => { fileInputRef.current?.click(); setAttachmentMenuOpen(false) }}><FileText size={17} /><span>Choose files</span></button>
-              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('poll') }}><ListChecks size={17} /><span>Poll</span></button>
-              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('event') }}><CalendarDays size={17} /><span>Event</span></button>
-              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('contact') }}><CircleUserRound size={17} /><span>Contact</span></button>
-              <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); shareLocation() }}><MapPin size={17} /><span>Share location</span></button>
-            </div>}
+          <div className="compose-field">
+            <div className="emoji-wrap">
+              <button type="button" className="emoji-toggle" aria-label="Insert an emoji" aria-expanded={emojiOpen} onClick={() => setEmojiOpen((open) => !open)}><Smile size={20} /></button>
+              {emojiOpen && <div className="emoji-sheet" role="dialog" aria-label="Choose an emoji">
+                {EMOJI_GROUPS.map((group) => <div className="emoji-group" key={group.label}>
+                  <strong>{group.label}</strong>
+                  <div className="emoji-grid">{group.items.map((glyph) => <button type="button" key={glyph} onClick={() => pickEmoji(glyph)}>{glyph}</button>)}</div>
+                </div>)}
+              </div>}
+            </div>
+            <input ref={composeInputRef} className="compose-input" type="text" placeholder="Type a message…" aria-label="Type a message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={20000} />
+            <div className="attach-wrap">
+              <button type="button" className="attach-button" aria-label="Add an attachment" aria-expanded={attachmentMenuOpen} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading}><Plus size={21} /></button>
+              {attachmentMenuOpen && <div className="attachment-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => { galleryInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Image size={17} /><span>Photos & videos</span></button>
+                <button type="button" role="menuitem" onClick={() => { fileInputRef.current?.click(); setAttachmentMenuOpen(false) }}><FileText size={17} /><span>Choose files</span></button>
+                <button type="button" role="menuitem" onClick={() => { cameraInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Camera size={17} /><span>Camera</span></button>
+                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('poll') }}><ListChecks size={17} /><span>Poll</span></button>
+                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('event') }}><CalendarDays size={17} /><span>Event</span></button>
+                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('contact') }}><CircleUserRound size={17} /><span>Contact</span></button>
+                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); shareLocation() }}><MapPin size={17} /><span>Share location</span></button>
+              </div>}
+            </div>
           </div>
           <input ref={galleryInputRef} className="hidden-file-input" type="file" accept="image/*,video/*" multiple onChange={handlePickedFiles} />
           <input ref={fileInputRef} className="hidden-file-input" type="file" multiple onChange={handlePickedFiles} />
-          <input className="compose-input" type="text" placeholder={`Message #${chat.id}...`} aria-label="Type a message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={20000} />
-          <button type="submit" className="send-button" aria-label="Send message" disabled={!draft.trim() || uploading}><Send size={17} /></button>
-          <button type="button" className={`voice-record-button${recording ? ' is-recording' : ''}`} aria-label={recording ? 'Stop and send voice message' : 'Record a voice message'} title={recording ? 'Stop and send voice message' : 'Record a voice message'} onClick={toggleVoiceRecording} disabled={uploading}>{recording ? <Square size={16} /> : <Mic size={18} />}</button>
+          {/* `capture` is a request, not a guarantee: a desktop browser opens its file box. */}
+          <input ref={cameraInputRef} className="hidden-file-input" type="file" accept="image/*" capture="environment" onChange={handlePickedFiles} />
+          {draft.trim()
+            ? <button type="submit" className="send-button" aria-label="Send message" disabled={uploading}><Send size={18} /></button>
+            : <button type="button" className={`voice-record-button${recording ? ' is-recording' : ''}`} aria-label={recording ? 'Stop and send voice message' : 'Record a voice message'} title={recording ? 'Stop and send voice message' : 'Record a voice message'} onClick={toggleVoiceRecording} disabled={uploading}>{recording ? <Square size={16} /> : <Mic size={18} />}</button>}
         </form>
       </div>
       {calls.feedback && !calls.call && <div className="chat-notice call-feedback-toast" role="status">{calls.feedback}</div>}
@@ -2130,14 +2233,48 @@ function JoinRoomDialog({ initialRoom, initialName, onClose, onJoin }) {
   )
 }
 
-function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRemoved, roomRequest, onRoomRequestHandled }) {
+function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRead, onActiveRoomChange, onRoomRemoved, roomRequest, onRoomRequestHandled }) {
   const [query, setQuery] = useState('')
   const [activeChat, setActiveChat] = useState(null)
   const [joinDialog, setJoinDialog] = useState(null)
+  const [listFilter, setListFilter] = useState('all')
+  const [presence, setPresence] = useState({})
   const [inboxPaneWidth, setInboxPaneWidth] = useState(null)
   const [isResizing, setIsResizing] = useState(false)
   const gridRef = useRef(null)
-  const filtered = useMemo(() => rooms.filter((chat) => `${chat.name} ${chat.username} ${chat.message}`.toLowerCase().includes(query.toLowerCase())), [rooms, query])
+  const roomIds = rooms.map((room) => room.id).join('|')
+  const filtered = useMemo(() => {
+    const matched = rooms.filter((chat) => `${chat.name} ${chat.username} ${chat.message}`.toLowerCase().includes(query.toLowerCase()))
+    return listFilter === 'unread' ? matched.filter((chat) => (chat.unread || 0) > 0) : matched
+  }, [rooms, query, listFilter])
+  const unreadTotal = useMemo(() => rooms.reduce((total, room) => total + (room.unread || 0), 0), [rooms])
+
+  /**
+   * Presence is a server fact, so the list asks the server rather than reading a
+   * socket that only ever covers the one room currently open. Membership is
+   * checked on the way in, so a room this device cannot enter simply stays grey
+   * instead of leaking anything about it.
+   */
+  useEffect(() => {
+    if (!guest?.userId || !roomIds) {
+      setPresence({})
+      return undefined
+    }
+    const ids = roomIds.split('|').slice(0, PRESENCE_QUERY_LIMIT)
+    let active = true
+    const look = () => {
+      Promise.allSettled(ids.map((id) => fetchRoomPresence(guest, id).then((users) => users.some((user) => user.userId !== guest.userId))))
+        .then((results) => {
+          if (!active) return
+          const next = {}
+          ids.forEach((id, index) => { next[id] = results[index].status === 'fulfilled' ? results[index].value : false })
+          setPresence(next)
+        })
+    }
+    look()
+    const timer = window.setInterval(look, PRESENCE_REFRESH_MS)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [roomIds, guest?.userId, guest?.sessionToken])
 
   const resizeInboxPane = (width) => {
     const bounds = gridRef.current?.getBoundingClientRect()
@@ -2188,12 +2325,22 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRemove
       return
     }
     setActiveChat(chat)
+    onRoomRead(chat.id)
   }
   const joinFromDialog = async (displayName, roomInput, code) => {
     const chat = await onJoinRoom(displayName, roomInput, code)
     setActiveChat(chat)
+    onRoomRead(chat.id)
     setJoinDialog(null)
   }
+
+  /**
+   * The shell needs to know which room is on screen: a message that lands in it
+   * is read, and a message that lands anywhere else is a badge.
+   */
+  useEffect(() => {
+    onActiveRoomChange(activeChat?.id || null)
+  }, [activeChat?.id, onActiveRoomChange])
 
   /**
    * A room opened from the call log or the short feed arrives as a request,
@@ -2206,6 +2353,7 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRemove
     if (!roomRequest) return undefined
     const summary = rooms.find((room) => room.id === roomRequest.roomId) || roomSummary(roomRequest.roomId)
     setActiveChat(summary)
+    onRoomRead(summary.id)
     if (!roomRequest.call) onRoomRequestHandled?.()
     return undefined
     // Only a new request opens a room; the room list changes far too often.
@@ -2217,7 +2365,22 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRemove
         <section className="inbox-card">
           <div className="section-title room-list-title"><div><h2>Your rooms</h2><span>{rooms.length} {rooms.length === 1 ? 'room' : 'rooms'} on this device</span></div><button type="button" className="room-add-button" aria-label="Create or join a room" onClick={() => setJoinDialog('')}><Plus size={18} /></button></div>
           <SearchBar value={query} onChange={setQuery} count={filtered.length} />
-          <ChatList chats={filtered} activeId={activeChat?.id} onSelect={openRoom} onCreate={() => setJoinDialog('')} hasQuery={Boolean(query)} />
+          <div className="list-filters" role="group" aria-label="Filter conversations">
+            {LIST_FILTERS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`list-filter ${listFilter === item.id ? 'active' : ''}`}
+                aria-pressed={listFilter === item.id}
+                onClick={() => setListFilter(item.id)}
+              >
+                {item.label}
+                {item.id === 'unread' && unreadTotal > 0 && <span className="list-filter-count">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}
+              </button>
+            ))}
+          </div>
+          <ChatList chats={filtered} activeId={activeChat?.id} presence={presence} onSelect={openRoom} onCreate={() => setJoinDialog('')} hasQuery={Boolean(query)} filter={listFilter} />
+          <button type="button" className="room-fab" aria-label="Create or join a room" onClick={() => setJoinDialog('')}><Plus size={22} /></button>
         </section>
         {activeChat && <div className="split-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize rooms and chat panels" aria-valuemin={340} aria-valuemax={Math.round(maxInboxWidth)} aria-valuenow={Math.round(currentInboxWidth)} aria-valuetext={`${Math.round(currentInboxWidth)} pixels for rooms`} tabIndex={0} onPointerDown={handleResizePointerDown} onPointerMove={handleResizePointerMove} onPointerUp={handleResizeEnd} onPointerCancel={handleResizeEnd} onKeyDown={handleResizeKeyDown} onDoubleClick={() => setInboxPaneWidth(null)} />}
         {activeChat && guest ? <ChatPreview key={`${activeChat.id}:${guest.userId}`} chat={activeChat} session={guest} onClose={() => setActiveChat(null)} onLatestMessage={onLatestMessage} onChatRemoved={(roomId) => { setActiveChat(null); onRoomRemoved(roomId) }} autoCall={roomRequest?.call || null} onAutoCallHandled={() => onRoomRequestHandled?.()} /> : <section className="welcome-card"><div className="welcome-orb"><MessageCircle size={30} /></div><p className="eyebrow">A LITTLE NOTE</p><h2>Make space for<br /><em>good conversations.</em></h2><p>Create a room, or join one with the pairing code its owner hands you. A room holds two people, and your messages appear here in real time.</p><button type="button" className="welcome-create-button" onClick={() => setJoinDialog('')}><Plus size={16} /> Create or join a room</button><div className="welcome-stats"><span><strong>{rooms.length.toString().padStart(2, '0')}</strong><small>rooms on this device</small></span><span><strong>Live</strong><small>room messages</small></span></div></section>}
@@ -2762,9 +2925,11 @@ function BottomNavigation() {
 }
 
 function App() {
-  const [dark, setDark] = useState(() => localStorage.getItem('inchat-theme') === 'dark')
+  const [dark, setDark] = useState(() => readThemePreference())
   const [guest, setGuest] = useState(() => readGuest())
   const [rooms, setRooms] = useState(() => readRooms())
+  const activeRoomRef = useRef(null)
+  const rememberActiveRoom = useCallback((roomId) => { activeRoomRef.current = roomId || null }, [])
   const [profile, setProfile] = useState(null)
   const [roomRequest, setRoomRequest] = useState(null)
   const [feedNotice, setFeedNotice] = useState('')
@@ -2778,7 +2943,10 @@ function App() {
   }, [feedNotice])
 
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+    // The pre-paint helper owns both the attribute and the browser-chrome colour,
+    // so a toggle cannot leave the status bar showing the other theme.
+    if (window.__inchatSetTheme) window.__inchatSetTheme(dark)
+    else document.documentElement.dataset.theme = dark ? 'dark' : 'light'
     localStorage.setItem('inchat-theme', dark ? 'dark' : 'light')
   }, [dark])
 
@@ -2845,12 +3013,52 @@ function App() {
     if (!message) return forgetRoomPreview(roomId)
     const text = message.text || describeMessage(message)
     const summary = { message: text.length > 70 ? `${text.slice(0, 67)}…` : text, time: message.time || formatTime(message.ts) }
+    /**
+     * A message is unread when this device was not looking at the room it landed
+     * in, and your own message is never unread for you. The count belongs to the
+     * device: reading a room on a phone does not silence the same room on a
+     * laptop, and reloading the page does not invent a message nobody sent.
+     */
+    const reading = roomId === activeRoomRef.current
     setRooms((current) => {
-      const next = current.map((room) => room.id === roomId ? { ...room, ...summary } : room)
+      const next = current.map((room) => (room.id === roomId ? {
+        ...room,
+        ...summary,
+        unread: reading || message.sender !== 'them' ? 0 : (room.unread || 0) + 1,
+      } : room))
       saveRooms(next)
       return next
     })
   }
+
+  /** Opening a room is the read event: the badge clears with the transcript. */
+  const clearRoomUnread = (roomId) => setRooms((current) => {
+    if (!current.some((room) => room.id === roomId && room.unread)) return current
+    const next = current.map((room) => (room.id === roomId ? { ...room, unread: 0 } : room))
+    saveRooms(next)
+    return next
+  })
+
+  /**
+   * One channel for the rooms this device is not sitting in. A room socket only
+   * ever hears its own room, so without this the list would show a transcript
+   * the server has moved on from and a badge that never moves. The payload is
+   * the same message the room channel got; rooms this device does not list are
+   * dropped by the preview update, which only maps over rooms it knows.
+   */
+  useEffect(() => {
+    if (!guest?.userId) return undefined
+    const socket = connectFeed(guest)
+    socket.on('room_activity', (payload) => {
+      if (!payload?.room || payload.userId === guest.userId) return
+      updateRoomPreview(payload.room, toUiMessage(payload, guest))
+    })
+    return () => {
+      socket.removeAllListeners()
+      socket.close()
+    }
+    // A new identity is the only thing that should rebuild this channel.
+  }, [guest?.userId, guest?.sessionToken])
 
   /** Nothing left to preview: the row goes back to the empty-room wording. */
   const forgetRoomPreview = (roomId) => setRooms((current) => {
@@ -2904,7 +3112,7 @@ function App() {
 
   const routes = (
     <Routes>
-      <Route path="/" element={<MainDashboard guest={guest} rooms={rooms} onJoinRoom={joinRoom} onLatestMessage={updateRoomPreview} onRoomRemoved={forgetRoomOnDevice} roomRequest={roomRequest} onRoomRequestHandled={() => setRoomRequest(null)} onFeedReturn={returnToFeed} />} />
+      <Route path="/" element={<MainDashboard guest={guest} rooms={rooms} onJoinRoom={joinRoom} onLatestMessage={updateRoomPreview} onRoomRead={clearRoomUnread} onActiveRoomChange={rememberActiveRoom} onRoomRemoved={forgetRoomOnDevice} roomRequest={roomRequest} onRoomRequestHandled={() => setRoomRequest(null)} onFeedReturn={returnToFeed} />} />
       <Route path="/updates" element={<UpdatesPage guest={guest} />} />
       <Route path="/shorts" element={<ShortsPage guest={guest} rooms={rooms} onOpenRoom={openRoomFromFeed} />} />
       <Route path="/calls" element={<CallsPage guest={guest} notice={feedNotice} onOpenRoom={(roomId) => openRoomFromFeed(roomId)} onCallBack={(call) => openRoomFromFeed(call.room, { userId: call.peer.userId, displayName: call.peer.displayName, mode: call.mode })} />} />

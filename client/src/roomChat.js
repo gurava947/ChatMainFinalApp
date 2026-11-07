@@ -99,9 +99,11 @@ export function roomSummary(roomId) {
     color: 'teal',
     message: 'Room is ready — say hello.',
     time: 'Now',
+    // Both of these are the device's own state, filled in by the shell: a badge
+    // starts at nothing and a seat starts cold until presence says otherwise.
+    // A room holds two people, so there is no "group" to claim here.
     unread: 0,
-    online: false,
-    group: true
+    online: false
   }
 }
 
@@ -220,6 +222,15 @@ export async function authorizeRoom(session, room, credential = '') {
 
 export async function fetchRoomRoster(session, room) {
   return settingsRequest(roomPath(room, '/roster'), session)
+}
+
+/**
+ * The sockets the server currently sees in this room. Membership is checked
+ * server-side, so a room id that is not yours answers with an error, not a list.
+ */
+export async function fetchRoomPresence(session, room) {
+  const result = await settingsRequest(roomPath(room, '/presence'), session)
+  return Array.isArray(result.users) ? result.users : []
 }
 
 /** A code that has been read out in a group chat is a code that needs replacing. */
