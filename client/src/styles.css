@@ -1269,3 +1269,35 @@ textarea:focus-visible,
 /* The transcript column starts its children, so a strip that wants the width has to ask for it. */
 .preview-body .feed-failure,.preview-body .feed-loading{align-self:stretch}
 .media-viewer-failure{position:absolute;left:50%;bottom:76px;transform:translateX(-50%);max-width:min(420px,86vw);padding:9px 14px;border-radius:999px;background:var(--surface);box-shadow:var(--shadow)}
+
+
+/* InChat mobile-first redesign: one floating destination bar and a true media sheet. */
+.brand-lockup{gap:9px}
+.india-flag{display:inline-grid;place-items:center;width:26px;height:26px;border:1px solid var(--line);border-radius:50%;background:var(--surface);font-size:14px;line-height:1}
+.bottom-nav{position:fixed;z-index:60;bottom:calc(12px + env(safe-area-inset-bottom));left:50%;right:auto;transform:translateX(-50%);width:min(430px,calc(100vw - 28px));display:flex;justify-content:space-around;gap:4px;margin:0;padding:6px;border:1px solid color-mix(in srgb,var(--line) 86%,transparent);border-radius:26px;background:color-mix(in srgb,var(--surface) 94%,transparent);box-shadow:0 10px 32px rgba(21,39,32,.16);backdrop-filter:blur(18px)}
+.bottom-nav a,.bottom-nav a.active{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;min-height:48px;padding:8px 10px;border-radius:18px;font-size:11px}
+.bottom-nav a.active{background:color-mix(in srgb,var(--accent) 16%,var(--surface));color:var(--accent-on-tint)}
+.attachment-backdrop{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-end;justify-content:center;padding:0;background:rgba(15,25,21,.42);backdrop-filter:blur(4px);animation:attachment-fade .18s ease-out}
+.attachment-menu{position:relative;left:auto;bottom:auto;z-index:auto;width:min(560px,100%);max-height:min(82dvh,680px);overflow-y:auto;margin:0 auto;padding:10px 20px calc(20px + env(safe-area-inset-bottom));border:1px solid color-mix(in srgb,var(--line) 84%,transparent);border-bottom:0;border-radius:26px 26px 0 0;background:var(--surface);box-shadow:0 -18px 56px rgba(0,0,0,.22);animation:attachment-rise .24s cubic-bezier(.2,.8,.2,1);}
+.attachment-sheet-handle{width:42px;height:4px;margin:0 auto 15px;border-radius:999px;background:var(--muted);opacity:.36}
+.attachment-sheet-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.attachment-sheet-header>div{display:grid;gap:4px}
+.attachment-sheet-header span{color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.13em}
+.attachment-sheet-header strong{color:var(--ink);font-size:18px;letter-spacing:-.035em}
+.attachment-sheet-header>button{display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:50%;background:var(--surface-2);color:var(--muted)}
+.attachment-shortcuts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.attachment-shortcuts button{display:flex;min-width:0;flex-direction:column;align-items:center;gap:8px;padding:10px 3px;border:0;border-radius:16px;background:transparent;color:var(--ink);font-size:10px;font-weight:650;text-align:center;touch-action:manipulation}
+.attachment-shortcuts button:hover{background:var(--surface-2)}
+.attachment-shortcuts button svg{box-sizing:content-box;width:21px;height:21px;padding:13px;border-radius:16px;background:color-mix(in srgb,var(--accent) 12%,var(--surface));color:var(--accent-text)}
+.attachment-hd-row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:17px 0 0;padding:13px 14px;border:1px solid var(--line);border-radius:16px;background:var(--surface-2)}
+.attachment-hd-row>span{display:grid;gap:3px}
+.attachment-hd-row strong{color:var(--ink);font-size:12px}
+.attachment-hd-row small{color:var(--muted);font-size:10px;line-height:1.35}
+.attachment-sheet-divider{height:1px;margin:18px 0 12px;background:var(--line)}
+.attachment-rich-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.attachment-rich-actions button{display:flex;align-items:center;justify-content:center;gap:7px;min-height:42px;padding:8px 5px;border:1px solid var(--line);border-radius:13px;background:var(--surface);color:var(--ink);font-size:10px;font-weight:650}
+.attachment-rich-actions button:hover{border-color:var(--accent);color:var(--accent-text)}
+@keyframes attachment-rise{from{opacity:.45;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+@keyframes attachment-fade{from{opacity:0}to{opacity:1}}
+@media(max-width:420px){.attachment-menu{padding-left:14px;padding-right:14px}.attachment-shortcuts{gap:3px}.attachment-shortcuts button{font-size:9px}.attachment-shortcuts button svg{padding:11px}.attachment-rich-actions{gap:5px}.attachment-rich-actions button{gap:4px;font-size:9px}}
+@media(prefers-reduced-motion:reduce){.attachment-backdrop,.attachment-menu{animation:none}}

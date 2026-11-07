@@ -46,7 +46,6 @@ import useRoomCalls from './useRoomCalls'
 const navItems = [
   { to: '/', label: 'Chats', icon: MessageCircle, end: true },
   { to: '/updates', label: 'Updates', icon: Bell },
-  { to: '/shorts', label: 'Short Videos', icon: Play },
   { to: '/calls', label: 'Calls', icon: Phone },
 ]
 
@@ -861,7 +860,7 @@ function AppHeader({ dark, onToggle, guest, profile, rooms, onForgetRoom, onProf
   })
   return (
     <header className="app-header">
-      <div className="brand-lockup"><BrandMark /><div><strong>INchat</strong></div></div>
+      <div className="brand-lockup"><BrandMark /><div><strong>INchat</strong></div><span className="india-flag" aria-label="India">🇮🇳</span></div>
       <div className="header-actions">
         <ThemeToggle dark={dark} onToggle={onToggle} />
         <div className="menu-wrap">
@@ -1250,6 +1249,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const [notice, setNotice] = useState('')
   const [socket, setSocket] = useState(null)
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
+  const [hdQuality, setHdQuality] = useState(readHdPreference)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [recording, setRecording] = useState(false)
@@ -1290,6 +1290,8 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const fileInputRef = useRef(null)
   /** `capture` asks the phone for its camera instead of its library. */
   const cameraInputRef = useRef(null)
+  const frontCameraInputRef = useRef(null)
+  const videoInputRef = useRef(null)
   const composeInputRef = useRef(null)
   const recorderRef = useRef(null)
   const recordingStreamRef = useRef(null)
@@ -1297,7 +1299,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const recordingStartRef = useRef(0)
   const attachMenuRef = useRef(null)
   const calls = useRoomCalls(socket, chat.id, session)
-  useMenuNavigation(attachMenuRef, { active: attachmentMenuOpen, onClose: () => setAttachmentMenuOpen(false) })
+  useDialogTrap(attachMenuRef, { active: attachmentMenuOpen, onClose: () => setAttachmentMenuOpen(false) })
   const chatOverlayOpen = attachmentMenuOpen || emojiOpen || calls.pickerMode || messageSearchOpen || settingsOpen || Boolean(richSheet) || Boolean(mediaViewer)
   useBackDismiss(chatOverlayOpen, () => {
     if (mediaViewer) setMediaViewer(null)
@@ -2148,15 +2150,27 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
             </div>
             <input ref={composeInputRef} className="compose-input" type="text" placeholder="Type a message…" aria-label="Type a message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={20000} />
             <div className="attach-wrap">
-              <button type="button" className="attach-button" aria-label="Add an attachment" aria-haspopup="menu" aria-expanded={attachmentMenuOpen} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading}><Plus size={21} /></button>
-              {attachmentMenuOpen && <div ref={attachMenuRef} className="attachment-menu" role="menu">
-                <button type="button" role="menuitem" onClick={() => { galleryInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Image size={17} /><span>Photos & videos</span></button>
-                <button type="button" role="menuitem" onClick={() => { fileInputRef.current?.click(); setAttachmentMenuOpen(false) }}><FileText size={17} /><span>Choose files</span></button>
-                <button type="button" role="menuitem" onClick={() => { cameraInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Camera size={17} /><span>Camera</span></button>
-                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('poll') }}><ListChecks size={17} /><span>Poll</span></button>
-                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('event') }}><CalendarDays size={17} /><span>Event</span></button>
-                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('contact') }}><CircleUserRound size={17} /><span>Contact</span></button>
-                <button type="button" role="menuitem" onClick={() => { setAttachmentMenuOpen(false); shareLocation() }}><MapPin size={17} /><span>Share location</span></button>
+              <button type="button" className="attach-button" aria-label="Add an attachment" aria-haspopup="dialog" aria-expanded={attachmentMenuOpen} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading}><Plus size={21} /></button>
+              {attachmentMenuOpen && <div className="attachment-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAttachmentMenuOpen(false) }}>
+                <section ref={attachMenuRef} className="attachment-menu" role="dialog" aria-modal="true" aria-label="Choose an attachment">
+                  <div className="attachment-sheet-handle" aria-hidden="true" />
+                  <div className="attachment-sheet-header"><div><span>SHARE SOMETHING</span><strong>Choose an attachment</strong></div><button type="button" aria-label="Close attachments" onClick={() => setAttachmentMenuOpen(false)}><X size={18} /></button></div>
+                  <div className="attachment-shortcuts">
+                    <button type="button" onClick={() => { cameraInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Camera size={20} /><span>Back camera</span></button>
+                    <button type="button" onClick={() => { frontCameraInputRef.current?.click(); setAttachmentMenuOpen(false) }}><CircleUserRound size={20} /><span>Front camera</span></button>
+                    <button type="button" onClick={() => { videoInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Video size={20} /><span>Record video</span></button>
+                    <button type="button" onClick={() => { galleryInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Image size={20} /><span>Photos & videos</span></button>
+                    <button type="button" onClick={() => { fileInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Ellipsis size={20} /><span>More apps & files</span></button>
+                  </div>
+                  <label className="attachment-hd-row"><span><strong>Send in HD</strong><small>{hdQuality ? 'Keep original image quality.' : 'Optimize media to send faster.'}</small></span><input type="checkbox" role="switch" className="settings-switch" checked={hdQuality} onChange={(event) => setHdQuality(saveHdPreference(event.target.checked))} /></label>
+                  <div className="attachment-sheet-divider" />
+                  <div className="attachment-rich-actions" aria-label="More sharing options">
+                    <button type="button" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('poll') }}><ListChecks size={17} /><span>Poll</span></button>
+                    <button type="button" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('event') }}><CalendarDays size={17} /><span>Event</span></button>
+                    <button type="button" onClick={() => { setAttachmentMenuOpen(false); setRichSheet('contact') }}><CircleUserRound size={17} /><span>Contact</span></button>
+                    <button type="button" onClick={() => { setAttachmentMenuOpen(false); shareLocation() }}><MapPin size={17} /><span>Location</span></button>
+                  </div>
+                </section>
               </div>}
             </div>
           </div>
@@ -2164,6 +2178,8 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
           <input ref={fileInputRef} className="hidden-file-input" tabIndex={-1} type="file" multiple onChange={handlePickedFiles} />
           {/* `capture` is a request, not a guarantee: a desktop browser opens its file box. */}
           <input ref={cameraInputRef} className="hidden-file-input" tabIndex={-1} type="file" accept="image/*" capture="environment" onChange={handlePickedFiles} />
+          <input ref={frontCameraInputRef} className="hidden-file-input" tabIndex={-1} type="file" accept="image/*" capture="user" onChange={handlePickedFiles} />
+          <input ref={videoInputRef} className="hidden-file-input" tabIndex={-1} type="file" accept="video/*" capture="environment" onChange={handlePickedFiles} />
           {draft.trim()
             ? <button type="submit" className="send-button" aria-label="Send message" disabled={uploading}><Send size={18} /></button>
             : <button type="button" className={`voice-record-button${recording ? ' is-recording' : ''}`} aria-label={recording ? 'Stop and send voice message' : 'Record a voice message'} title={recording ? 'Stop and send voice message' : 'Record a voice message'} onClick={toggleVoiceRecording} disabled={uploading}>{recording ? <Square size={16} /> : <Mic size={18} />}</button>}
