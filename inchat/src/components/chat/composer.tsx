@@ -542,11 +542,12 @@ export function Composer({
       <div className="flex items-center gap-2">
         <button
           type="button"
-          className="btn btn-ghost !px-3 !py-2 text-sm"
+          className="btn btn-ghost !grid !h-10 !w-10 !place-items-center !rounded-xl !p-0 text-xl"
+          aria-label="Add attachment"
           aria-expanded={panel === 'menu'}
           onClick={() => openPanel('menu')}
         >
-          +
+          <span aria-hidden="true">+</span>
         </button>
         <button
           type="button"
@@ -579,33 +580,19 @@ export function Composer({
       </div>
 
       {panel === 'menu' ? (
-        <div className="grid gap-1 sm:grid-cols-2">
-          <button
-            type="button"
-            className="btn btn-ghost justify-start text-sm"
-            aria-label="Documents: Photos, videos and files"
-            onClick={() => {
-              fileInputRef.current?.click();
-              setPanel('none');
-            }}
-          >
-            Documents
-            <span className="text-[var(--text-dim)]">Photos, videos and files</span>
-          </button>
-          {MENU_ITEMS.map((item) => (
-            <button
-              key={item.panel}
-              type="button"
-              className="btn btn-ghost justify-start text-sm"
-              // Two stacked lines of text concatenate into one run when a reader
-              // flattens the button, so the name is stated rather than derived.
-              aria-label={`${item.label}: ${item.hint}`}
-              onClick={() => openPanel(item.panel)}
-            >
-              {item.label}
-              <span className="text-[var(--text-dim)]">{item.hint}</span>
-            </button>
-          ))}
+        <div className="attachment-scrim" onClick={() => setPanel('none')}>
+          <section className="attachment-sheet" role="dialog" aria-modal="true" aria-label="Share an attachment" onClick={(event) => event.stopPropagation()}>
+            <div className="attachment-sheet-grab" aria-hidden="true" />
+            <div className="attachment-sheet-heading"><div><strong>Share with {title}</strong><p>Choose what you want to send</p></div><button type="button" className="attachment-close" aria-label="Close attachment picker" onClick={() => setPanel('none')}>×</button></div>
+            <div className="attachment-actions">
+              <button type="button" className="attachment-action" onClick={() => { setPanel('none'); setCameraOpen(true); }}><i className="material-symbols-outlined">photo_camera</i><span>Camera</span></button>
+              <button type="button" className="attachment-action" onClick={() => { fileInputRef.current?.click(); setPanel('none'); }}><i className="material-symbols-outlined">photo_library</i><span>Photos &amp; videos</span></button>
+              <button type="button" className="attachment-action" onClick={() => { fileInputRef.current?.click(); setPanel('none'); }}><i className="material-symbols-outlined">attach_file</i><span>Documents</span></button>
+              {MENU_ITEMS.map((item) => <button key={item.panel} type="button" className="attachment-action" onClick={() => openPanel(item.panel)}><i className="material-symbols-outlined">{item.panel === 'poll' ? 'poll' : item.panel === 'location' ? 'location_on' : item.panel === 'contact' ? 'person' : 'event'}</i><span>{item.label}</span></button>)}
+            </div>
+            <button type="button" className={`attachment-hd ${hd ? 'is-on' : ''}`} aria-pressed={hd} onClick={() => setHd((current) => !current)}><span><i className="material-symbols-outlined">hd</i><span><strong>Send in HD</strong><small>Keep original photo quality</small></span></span><span className="attachment-switch" aria-hidden="true" /></button>
+            <p className="attachment-apps-note">Recent apps · Camera roll · More options</p>
+          </section>
         </div>
       ) : null}
 

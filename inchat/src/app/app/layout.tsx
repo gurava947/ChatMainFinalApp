@@ -43,10 +43,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const unread = Number(unreadRow?.my_unread_total ?? 0);
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-[var(--line)] bg-[var(--surface)] px-4 py-3">
-        <span className="tricolour-frame rounded-[13px]">
-          <InLogo size={32} />
-        </span>
+      <header className="app-topbar sticky top-0 z-20 flex items-center gap-3 px-4 py-3">
+        <Link href="/app/chat" className="app-brand-lockup flex shrink-0 items-center gap-2" aria-label="InChat home">
+          <span className="tricolour-frame rounded-[13px]"><InLogo size={32} /></span>
+          <span className="app-brand-word">INchat</span>
+          <span className="india-flag" role="img" aria-label="Indian flag"><i /><i /><i /></span>
+        </Link>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{profile.full_name}</p>
           <p className="truncate text-xs text-[var(--text-dim)]">Guest chat · @{profile.username}</p>

@@ -6,7 +6,6 @@ import { usePathname } from 'next/navigation';
 const TABS = [
   { href: '/app/chat', label: 'Chats', icon: 'chat_bubble' },
   { href: '/app/updates', label: 'Updates', icon: 'add_circle' },
-  { href: '/app/communities', label: 'Communities', icon: 'groups' },
   { href: '/app/calls', label: 'Calls', icon: 'call' }
 ];
 
@@ -16,7 +15,7 @@ export function TabBar({ unread }: { unread: number }) {
   return (
     <nav
       aria-label="Primary"
-      className="sticky bottom-0 z-20 border-t border-[var(--line)] bg-[var(--surface)] px-2 pb-[max(8px,env(safe-area-inset-bottom))] md:pb-2"
+      className="inchat-tabbar sticky bottom-0 z-20 px-3 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 md:pb-2"
     >
       <ul className="mx-auto flex max-w-[820px] items-stretch justify-around">
         {TABS.map((tab) => {
