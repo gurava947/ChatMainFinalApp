@@ -81,6 +81,38 @@ const env = parsed.data;
 env.INSTANCE_ID = process.env.INSTANCE_ID || process.env.HOSTNAME || `local-${process.pid}`;
 
 /**
+ * An Upstash database hands out two credentials for two protocols, and only one
+ * of them works here. REST answers HTTP requests, so it cannot subscribe - which
+ * rules out the Socket.io adapter - and it cannot hold a connection long enough
+ * to be the shared roster either. The REST pair is what a dashboard offers
+ * first, so a deploy that copies it boots with its variables set and still has
+ * no store: every request then fails on a line that never mentions them.
+ */
+const UPSTASH_REST_KEYS = ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN'];
+
+if (!env.REDIS_URL && UPSTASH_REST_KEYS.some((key) => process.env[key])) {
+  throw new Error(
+    'REDIS_URL is missing, and the Upstash REST variables are not a substitute. '
+    + 'Set REDIS_URL to the Redis (TCP) connection string from the same Upstash database - '
+    + 'rediss://default:<password>@<database>.upstash.io:6379. REST cannot carry the '
+    + 'pub/sub the Socket.io adapter needs, so ioredis is the only supported client here.'
+  );
+}
+
+/**
+ * The other way the same mistake arrives: the REST URL pasted into the right
+ * variable. ioredis would fail on the first command rather than at boot, so the
+ * scheme is checked where the rest of the configuration is.
+ */
+if (env.REDIS_URL && /^https?:\/\//i.test(env.REDIS_URL)) {
+  throw new Error(
+    'REDIS_URL has to be a redis:// or rediss:// connection string, not an http(s):// endpoint. '
+    + 'For Upstash, use the Redis URL (rediss://default:<password>@<database>.upstash.io:6379) '
+    + 'rather than the REST URL shown next to it.'
+  );
+}
+
+/**
  * A room's two seats are one compare-and-set record, so the cap only means
  * anything if every replica reads the same one. With the in-memory store each
  * isolate keeps its own roster: two isolates is four seats, and a guest who

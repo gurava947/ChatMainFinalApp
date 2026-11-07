@@ -14,7 +14,9 @@ const ENV_KEYS = [
   'CORS_ORIGIN',
   'VERCEL',
   'VERCEL_URL',
-  'VERCEL_PROJECT_PRODUCTION_URL'
+  'VERCEL_PROJECT_PRODUCTION_URL',
+  'UPSTASH_REDIS_REST_URL',
+  'UPSTASH_REDIS_REST_TOKEN'
 ];
 
 /**
@@ -87,6 +89,38 @@ describe('shared-store gate', () => {
     });
     expect(error).toBeNull();
     expect(env.corsOrigins).toContain('https://inchat.vercel.app');
+  });
+
+  /**
+   * The REST pair is the first thing an Upstash dashboard shows, so this is the
+   * misconfiguration a deploy actually hits. The answer has to name the values
+   * that are present, not repeat that something is missing.
+   */
+  it('says what the Upstash REST variables are not, when only those are set', () => {
+    const { error } = loadEnv({
+      NODE_ENV: 'production',
+      UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
+      UPSTASH_REDIS_REST_TOKEN: 'a-token'
+    });
+    expect(error.message).toContain('Upstash REST variables are not a substitute');
+    expect(error.message).toContain('rediss://default:');
+  });
+
+  it('refuses a REST endpoint handed to REDIS_URL', () => {
+    const { error } = loadEnv({
+      NODE_ENV: 'production',
+      REDIS_URL: 'https://example.upstash.io'
+    });
+    expect(error.message).toContain('not an http(s):// endpoint');
+  });
+
+  it('accepts the TCP connection string an Upstash database also publishes', () => {
+    const { env, error } = loadEnv({
+      NODE_ENV: 'production',
+      REDIS_URL: 'rediss://default:secret@example.upstash.io:6379'
+    });
+    expect(error).toBeNull();
+    expect(env.sharedStore).toBe(true);
   });
 
   it('allows the in-memory store where every room lives in one process anyway', () => {

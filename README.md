@@ -340,7 +340,7 @@ and Redis for anything that has to survive more than one instance.
 ```bash
 vercel link
 vercel project update --framework other --node-version 22.x --fluid-compute   # no framework preset
-vercel integration add upstash/upstash-kv                                     # injects REDIS_URL (rediss://)
+vercel integration add upstash                                                  # creates a database; check which names it writes
 vercel deploy --prod
 ```
 
@@ -376,8 +376,16 @@ What the repo does to fit that model:
   hold two people. `NODE_ENV` is `production` there, so a deploy without `REDIS_URL` fails at module
   load rather than falling back to the per-instance in-memory store - the function answers
   `500 FUNCTION_INVOCATION_FAILED` until the variable is set. That is the intended failure: the
-  fallback used to serve traffic while quietly letting a second isolate seat a third guest. Use the
-  Upstash integration, whose free plan is enough.
+  fallback used to serve traffic while quietly letting a second isolate seat a third guest. Whichever
+  way the database is provisioned, the variable this app reads is `REDIS_URL` in TCP form — see the next
+  bullet before blaming the platform.
+- Adding Upstash by hand instead of through the integration: copy the **Redis URL** into `REDIS_URL`, not
+  the REST pair. The console shows `https://<db>.upstash.io` + a REST token first, and those two values
+  (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`) are not read by this app at all — REST cannot
+  hold the pub/sub the Socket.io adapter runs on. The value needed is the one the *Redis CLI* panel
+  prints, `rediss://default:<password>@<db>.upstash.io:6379`, and it is a different secret from the REST
+  token. Booting with only the REST pair is now refused by name, so the failure says this instead of
+  leaving a `500` with no variable in its message.
 - Only `/tmp` is writable, so `UPLOAD_DIR` defaults to `/tmp/uploads` and `MEDIA_MAX_BYTES` to 4 MB on
   Vercel; `CORS_ORIGIN` is derived from `VERCEL_URL`/`VERCEL_PROJECT_PRODUCTION_URL` when unset.
 - Cold starts are absorbed rather than returned as errors: `/api` and `/media` check the store on every
@@ -391,10 +399,10 @@ To have Vercel build from the repository instead of `vercel deploy --prod` from 
 once in the dashboard - *Project → Settings → Git → Connect to GitHub* → `gurava947/ChatMainFinalApp`, production
 branch `main` (the `vercel git connect` CLI does the same thing). Everything the platform needs
 (`api/index.js` and `vercel.json`) is in the repo, so a git-driven deploy behaves exactly like the CLI
-one. The **Root Directory** and secrets are project-level settings, not repository files. Configure
-`REDIS_URL` with the Upstash integration in Vercel before the first deploy; without it the function
-cannot load and every request answers `500 FUNCTION_INVOCATION_FAILED` until the variable is set.
-Never commit the live Redis URL.
+one. The **Root Directory** and secrets are project-level settings, not repository files. Set `REDIS_URL`
+to the TCP connection string before the first deploy, whether the database came from the integration or
+from the Upstash console by hand; without it the function cannot load and every request answers
+`500 FUNCTION_INVOCATION_FAILED`. Never commit the live Redis URL.
 
 Same ephemeral-disk caveat as Render - attachments live in `/tmp` and vanish with the instance, so point
 `MEDIA_*` at object storage before relying on them. For an always-on socket server with no such
