@@ -379,17 +379,19 @@ What the repo does to fit that model:
   fallback used to serve traffic while quietly letting a second isolate seat a third guest. Whichever
   way the database is provisioned, the variable this app reads is `REDIS_URL` in TCP form — see the next
   bullet before blaming the platform.
-- Adding Upstash by hand instead of through the integration: copy the **Redis URL** into `REDIS_URL`, not
-  the REST pair. The console shows `https://<db>.upstash.io` + a REST token first, and those two values
+- Adding Upstash by hand instead of through the integration: `REDIS_URL` has to be the TCP form. The
+  console shows `https://<db>.upstash.io` + a REST token first, and those two values
   (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`) are read by nothing in `src/`. Measured against a
   live Upstash database with `node scripts/verify-upstash-rest.mjs`: REST answers `PING`, `SET/GET`,
   `HSET/HGETALL`, `ZADD`, `ZREVRANGEBYSCORE … LIMIT`, `INCR`, `SADD`, `EXPIRE`, `SCRIPT LOAD`, `EVALSHA`
   and `PUBLISH`, and refuses `MULTI`, `EXEC` and `SUBSCRIBE` with `501`. The store pipelines a send and
   the Socket.io adapter listens on a subscription, so REST is not a smaller deployment of this app - it is
-  a different, incomplete one. The value needed is the one the *Redis CLI* panel prints,
-  `rediss://default:<password>@<db>.upstash.io:6379`, and it is a different secret from the REST token.
-  Booting with only the REST pair is refused by name, so the failure says this instead of leaving a `500`
-  with no variable in its message.
+  a different, incomplete one. What is needed is a value in the form the *Redis CLI* panel prints:
+  `rediss://default:<password>@<db>.upstash.io:6379`. On the database used for these measurements that
+  password turned out to be the same string the REST console shows, which Upstash accepts on both protocols
+  - do not reject a working `rediss://` URL on the theory that the two secrets must differ, and do not
+  conclude from it that REST is usable either. Booting with only the REST variable names is refused, so
+  the failure says this instead of leaving a `500` with no variable in its message.
 - Only `/tmp` is writable, so `UPLOAD_DIR` defaults to `/tmp/uploads` and `MEDIA_MAX_BYTES` to 4 MB on
   Vercel; `CORS_ORIGIN` is derived from `VERCEL_URL`/`VERCEL_PROJECT_PRODUCTION_URL` when unset.
 - Cold starts are absorbed rather than returned as errors: `/api` and `/media` check the store on every
