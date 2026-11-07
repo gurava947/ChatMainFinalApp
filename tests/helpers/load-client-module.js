@@ -25,6 +25,11 @@ const RICH_CARD_EXPORTS = [
   'icsForEvent', 'pollOutcome', 'contactLinks',
 ];
 
+/** Keyboard arithmetic behind the focus trap and the menu roving focus. */
+const A11Y_EXPORTS = [
+  'FOCUSABLE_SELECTOR', 'isUsable', 'trapTarget', 'preferredFocus', 'menuTarget',
+];
+
 /** Device-side image shrinking behind the upload path. */
 const MEDIA_PREPARE_EXPORTS = [
   'readHdPreference', 'saveHdPreference', 'planImageFor', 'scaledSize',
@@ -130,6 +135,10 @@ function loadRichCards() {
   return loadClientModule('richCards.js', RICH_CARD_EXPORTS);
 }
 
+function loadA11y() {
+  return loadClientModule('a11y.js', A11Y_EXPORTS);
+}
+
 function loadMediaPrepare() {
   return loadClientModule('mediaPrepare.js', MEDIA_PREPARE_EXPORTS);
 }
@@ -167,9 +176,9 @@ function loadLocalStore() {
 }
 
 module.exports = {
-  loadRoomChat, loadRichCards, loadMediaPrepare, loadCallWindow, loadNotifications,
+  loadRoomChat, loadRichCards, loadA11y, loadMediaPrepare, loadCallWindow, loadNotifications,
   loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji,
-  ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
+  ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, A11Y_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
   NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
   LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS,
 };

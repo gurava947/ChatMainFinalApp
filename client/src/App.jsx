@@ -18,6 +18,7 @@ import {
 } from './richCards'
 import { prepareFiles, readHdPreference, saveHdPreference } from './mediaPrepare'
 import { EMOJI_GROUPS, insertAtCaret } from './emoji'
+import { FOCUSABLE_SELECTOR, isUsable, menuTarget, preferredFocus, trapTarget } from './a11y'
 import {
   callDuration, clampToViewport, defaultFrame, dragDelta, frameStyle, movedFrame, pointerPoint,
   readWindowMode, resizedFrame, saveWindowFrame, saveWindowMode, viewportSize,
@@ -112,6 +113,81 @@ function useBackDismiss(active, onDismiss) {
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [active])
+}
+
+const focusIfPresent = (element) => {
+  if (element && element.isConnected && typeof element.focus === 'function') element.focus()
+}
+
+/**
+ * A modal that lets Tab walk out of it is not really modal: everything behind
+ * it stays reachable and the screen reader user never finds their way back.
+ * This keeps Tab and Shift+Tab inside the container, takes focus to the field
+ * the dialog was opened for, closes on Escape, and hands focus back to whatever
+ * opened it. `onClose` is read through a ref so a fresh inline callback on
+ * every render cannot re-run the effect and steal focus mid-sentence.
+ */
+function useDialogTrap(containerRef, { active = true, onClose } = {}) {
+  const closeRef = useRef(onClose)
+  useEffect(() => { closeRef.current = onClose }, [onClose])
+  useEffect(() => {
+    const node = containerRef.current
+    if (!active || !node) return undefined
+    const opener = document.activeElement
+    const items = () => [...node.querySelectorAll(FOCUSABLE_SELECTOR)].filter(isUsable)
+    focusIfPresent(items()[preferredFocus(items())])
+    const handleKeyDown = (event) => {
+      if (event.key === 'Tab') {
+        const list = items()
+        const target = trapTarget({ count: list.length, from: list.indexOf(document.activeElement), shift: event.shiftKey })
+        if (target === null) return
+        event.preventDefault()
+        focusIfPresent(list[target])
+      } else if (event.key === 'Escape') {
+        event.preventDefault()
+        closeRef.current?.()
+      }
+    }
+    node.addEventListener('keydown', handleKeyDown)
+    return () => {
+      node.removeEventListener('keydown', handleKeyDown)
+      focusIfPresent(opener)
+    }
+  }, [containerRef, active])
+}
+
+/**
+ * The menu pattern the app claimed with `role="menu"` but never implemented:
+ * arrows walk the items, Home and End jump to the ends, Escape closes and
+ * returns focus to the button that opened the menu.
+ */
+function useMenuNavigation(listRef, { active = true, onClose } = {}) {
+  const closeRef = useRef(onClose)
+  useEffect(() => { closeRef.current = onClose }, [onClose])
+  useEffect(() => {
+    const node = listRef.current
+    if (!active || !node) return undefined
+    const opener = document.activeElement
+    const items = () => [...node.querySelectorAll('[role="menuitem"]')].filter(isUsable)
+    focusIfPresent(items()[0])
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeRef.current?.()
+        return
+      }
+      const list = items()
+      const target = menuTarget({ count: list.length, from: list.indexOf(document.activeElement), key: event.key })
+      if (target === null) return
+      event.preventDefault()
+      focusIfPresent(list[target])
+    }
+    node.addEventListener('keydown', handleKeyDown)
+    return () => {
+      node.removeEventListener('keydown', handleKeyDown)
+      focusIfPresent(opener)
+    }
+  }, [listRef, active])
 }
 
 const formatTime = (timestamp) => new Date(Number(timestamp) || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -282,21 +358,18 @@ function AudioAttachment({ attachment, url, voiceContent }) {
 }
 
 function MediaViewer({ media, onClose }) {
+  const viewerRef = useRef(null)
   const videoRef = useRef(null)
+  useDialogTrap(viewerRef, { active: Boolean(media), onClose })
   useEffect(() => {
     if (!media) return undefined
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    const onKey = (event) => { if (event.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      document.body.style.overflow = previousOverflow
-      window.removeEventListener('keydown', onKey)
-    }
+    return () => { document.body.style.overflow = previousOverflow }
   }, [media])
   if (!media) return null
   return (
-    <div className="media-viewer" role="dialog" aria-modal="true" aria-label={`${media.kind} viewer`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <div ref={viewerRef} className="media-viewer" role="dialog" aria-modal="true" aria-label={`${media.kind} viewer`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <header className="media-viewer-toolbar"><strong>{media.name}</strong><button type="button" aria-label="Minimize media viewer" title="Minimize" onClick={onClose}><Minimize2 size={19} /><span>Minimize</span></button></header>
       <div className={`media-viewer-stage media-viewer-${media.kind}`}>
         {media.kind === 'image' ? <img src={media.url} alt={media.name} /> : <video ref={videoRef} src={media.url} controls playsInline preload="metadata" autoPlay={Boolean(media.autoPlay)} aria-label={media.name} onLoadedMetadata={(event) => { const video = event.currentTarget; if (Number(media.initialTime) > 0) video.currentTime = Number(media.initialTime); if (media.autoPlay) video.play().catch(() => {}) }} />}
@@ -480,6 +553,7 @@ const richSheetFields = {
 }
 
 function RichComposer({ kind, onClose, onSend, onCancel }) {
+  const sheetRef = useRef(null)
   const [fields, setFields] = useState(() => (
     kind === 'poll'
       ? { question: '', options: ['', ''], multiple: false }
@@ -488,6 +562,7 @@ function RichComposer({ kind, onClose, onSend, onCancel }) {
         : { title: '', start: '', end: '', allDay: false, location: '', note: '' }
   ))
   const [error, setError] = useState('')
+  useDialogTrap(sheetRef, { onClose })
 
   const update = (key, value) => setFields((current) => ({ ...current, [key]: value }))
   const updateOption = (index, value) => setFields((current) => ({
@@ -511,7 +586,7 @@ function RichComposer({ kind, onClose, onSend, onCancel }) {
 
   return createPortal(
     <div className="room-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="room-modal rich-composer" role="dialog" aria-modal="true" aria-label={richSheetFields[kind].title}>
+      <section ref={sheetRef} className="room-modal rich-composer" role="dialog" aria-modal="true" aria-label={richSheetFields[kind].title}>
         <button type="button" className="room-modal-close" aria-label="Close" onClick={onClose}><X size={18} /></button>
         <p className="eyebrow">{richSheetFields[kind].eyebrow}</p>
         <h2 id="rich-composer-title">{richSheetFields[kind].title}</h2>
@@ -576,6 +651,7 @@ function ThemeToggle({ dark, onToggle }) {
 
 /** The About note is stored on the server under the guest session, so it survives a reload. */
 function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
+  const sheetRef = useRef(null)
   const [note, setNote] = useState(profile ? profile.note : null)
   const [avatar, setAvatar] = useState(profile ? profile.avatar : null)
   const [draft, setDraft] = useState(profile?.note?.text || '')
@@ -583,6 +659,7 @@ function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
   const [saving, setSaving] = useState(false)
   const [pictureBusy, setPictureBusy] = useState(false)
   const fileInputRef = useRef(null)
+  useDialogTrap(sheetRef, { onClose })
 
   useEffect(() => {
     if (profile) {
@@ -657,14 +734,14 @@ function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
 
   return createPortal(
     <div className="room-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="room-modal profile-sheet" role="dialog" aria-modal="true" aria-label="My profile">
+      <section ref={sheetRef} className="room-modal profile-sheet" role="dialog" aria-modal="true" aria-label="My profile">
         <button className="room-modal-close" type="button" aria-label="Close profile" onClick={onClose}><X size={18} /></button>
         <p className="eyebrow">MY PROFILE</p>
         <h2>{guest.displayName}</h2>
         <div className="profile-avatar-row">
           <AvatarFace className="profile-avatar" src={avatar?.url} initials={initialsOf(guest.displayName)} />
           <div className="profile-avatar-actions">
-            <input ref={fileInputRef} className="file-input-hidden" type="file" accept="image/*" aria-label="Choose a profile picture" onChange={pickPicture} disabled={pictureBusy} />
+            <input ref={fileInputRef} className="file-input-hidden" tabIndex={-1} type="file" accept="image/*" aria-label="Choose a profile picture" onChange={pickPicture} disabled={pictureBusy} />
             <button className="btn" type="button" disabled={pictureBusy} onClick={() => fileInputRef.current?.click()}><Image size={15} /> {avatar ? 'Change picture' : 'Add picture'}</button>
             {avatar ? <button className="btn btn-danger" type="button" disabled={pictureBusy} onClick={dropPicture}><Trash2 size={15} /> Remove</button> : null}
             <small role="status">{pictureBusy ? 'Uploading…' : ''}</small>
@@ -692,8 +769,10 @@ function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
 }
 
 function RoomsSheet({ rooms, onForgetRoom, onClose }) {
+  const sheetRef = useRef(null)
   const [copied, setCopied] = useState('')
   const [clipboardBlocked, setClipboardBlocked] = useState(false)
+  useDialogTrap(sheetRef, { onClose })
 
   const copyRoom = async (room) => {
     try {
@@ -707,7 +786,7 @@ function RoomsSheet({ rooms, onForgetRoom, onClose }) {
 
   return createPortal(
     <div className="room-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="room-modal rooms-sheet" role="dialog" aria-modal="true" aria-label="Rooms on this device">
+      <section ref={sheetRef} className="room-modal rooms-sheet" role="dialog" aria-modal="true" aria-label="Rooms on this device">
         <button className="room-modal-close" type="button" aria-label="Close rooms list" onClick={onClose}><X size={18} /></button>
         <p className="eyebrow">THIS DEVICE</p>
         <h2>Your rooms</h2>
@@ -746,9 +825,11 @@ function initialsOf(name, fallback = 'G') {
 
 function ProfileMenu({ guest, profile, onClose, onOpenProfile, onOpenRooms, onSignOut }) {
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
+  const menuRef = useRef(null)
   const initials = initialsOf(guest?.displayName)
+  useMenuNavigation(menuRef, { onClose })
   return (
-    <div className="profile-menu" role="menu" onKeyDown={(event) => event.key === 'Escape' && onClose()}>
+    <div ref={menuRef} className="profile-menu" role="menu">
       <div className="profile-menu-head"><AvatarFace className="avatar avatar-sm avatar-teal" src={profile?.avatar?.url} initials={initials} /><div><strong>{guest?.displayName || 'No profile yet'}</strong><span>{guest ? 'Guest session · no account' : 'Join a room to start one'}</span></div></div>
       <div className="menu-divider" />
       <button role="menuitem" onClick={onOpenProfile} disabled={!guest}><CircleUserRound size={17} /> My profile &amp; about</button>
@@ -779,7 +860,7 @@ function AppHeader({ dark, onToggle, guest, profile, rooms, onForgetRoom, onProf
       <div className="header-actions">
         <ThemeToggle dark={dark} onToggle={onToggle} />
         <div className="menu-wrap">
-          <button className="icon-button" aria-label="Open guest menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}><Ellipsis size={21} /></button>
+          <button className="icon-button" aria-label="Open guest menu" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}><Ellipsis size={21} /></button>
           {menuOpen && (
             <ProfileMenu
               guest={guest}
@@ -967,12 +1048,14 @@ function PairingSection({ chat, session }) {
 function ChatSettingsSheet({
   chat, session, settings, onClose, onSettingsChange, onHistoryRefresh, onChatDeleted, onLocalClear, onLocalForget,
 }) {
+  const sheetRef = useRef(null)
   const [pending, setPending] = useState('')
   const [status, setStatus] = useState('')
   const [confirming, setConfirming] = useState('')
   const [hd, setHd] = useState(readHdPreference)
   const [notify, setNotify] = useState(readNotifyPrefs)
   const [permission, setPermission] = useState(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission)
+  useDialogTrap(sheetRef, { onClose })
 
   const changeNotify = async (patch) => {
     if (patch.enabled) {
@@ -1033,7 +1116,7 @@ function ChatSettingsSheet({
 
   return createPortal(
     <div className="room-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="room-modal chat-settings-sheet" role="dialog" aria-modal="true" aria-label={`Chat settings for ${chat.name}`}>
+      <section ref={sheetRef} className="room-modal chat-settings-sheet" role="dialog" aria-modal="true" aria-label={`Chat settings for ${chat.name}`}>
         <button className="room-modal-close" type="button" aria-label="Close chat settings" onClick={onClose}><X size={18} /></button>
         <p className="eyebrow">CHAT SETTINGS</p>
         <h2>{chat.name}</h2>
@@ -1126,6 +1209,21 @@ function ChatSettingsSheet({
  */
 const LOCAL_HYDRATION_LIMIT = 200
 
+/**
+ * One bubble, one menu — so this can only ever mount once, which is what lets
+ * it own a focus hook. A menu rendered inside the message loop could not.
+ */
+function AuthorPopMenu({ author, onBlock, onClose }) {
+  const menuRef = useRef(null)
+  useMenuNavigation(menuRef, { onClose })
+  return (
+    <div ref={menuRef} className="bubble-author-pop" role="menu">
+      <button type="button" role="menuitem" onClick={onBlock}><Ban size={14} /> Block {author.displayName || 'this guest'}</button>
+      <button type="button" role="menuitem" onClick={onClose}>Cancel</button>
+    </div>
+  )
+}
+
 function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, autoCall, onAutoCallHandled }) {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState([])
@@ -1183,7 +1281,9 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const recordingStreamRef = useRef(null)
   const recordingChunksRef = useRef([])
   const recordingStartRef = useRef(0)
+  const attachMenuRef = useRef(null)
   const calls = useRoomCalls(socket, chat.id, session)
+  useMenuNavigation(attachMenuRef, { active: attachmentMenuOpen, onClose: () => setAttachmentMenuOpen(false) })
   const chatOverlayOpen = attachmentMenuOpen || emojiOpen || calls.pickerMode || messageSearchOpen || settingsOpen || Boolean(richSheet) || Boolean(mediaViewer)
   useBackDismiss(chatOverlayOpen, () => {
     if (mediaViewer) setMediaViewer(null)
@@ -1975,11 +2075,11 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
             {startsNewDay && <div className="message-date-divider"><span>{formatMessageDay(message.ts)}</span></div>}
             <div ref={(node) => { if (node) messageNodesRef.current.set(String(message.id), node); else messageNodesRef.current.delete(String(message.id)) }} data-message-id={message.id} data-user-id={message.userId || ''} className={`bubble bubble-${message.sender}${grouped ? ' bubble-grouped' : ''}${message.failed ? ' bubble-failed' : ''}${hasVideo ? ' bubble-has-video' : ''}${hasImage ? ' bubble-has-image' : ''}${isSearchMatch ? ' message-search-match' : ''}${isCurrentSearchMatch ? ' message-search-current' : ''}${selectMode && selectedIds.has(message.id) ? ' message-selected' : ''}`}>
               {selectMode && <button type="button" className="bubble-select-box" role="checkbox" aria-checked={selectedIds.has(message.id)} aria-label={`Select ${message.author || 'this message'} for deletion`} onClick={() => toggleSelected(message.id)}>{selectedIds.has(message.id) ? <Check size={13} /> : <span />}</button>}
-              {showAuthor && <small className="bubble-author"><AvatarFace className="bubble-avatar" src={profiles[message.userId]?.avatar?.url} initials={initialsOf(message.author, '#')} />{highlightText(message.author, searchIsActive ? messageSearchText : '')}<button type="button" className="bubble-author-menu" aria-label={`Options for ${message.author}`} onClick={() => setAuthorMenu({ userId: message.userId, displayName: message.author })}><Ellipsis size={13} /></button></small>}
-              {showAuthor && authorMenu && authorMenu.userId === message.userId && <div className="bubble-author-pop" role="menu">
-                <button type="button" role="menuitem" onClick={() => blockThisGuest(authorMenu)}><Ban size={14} /> Block {authorMenu.displayName || 'this guest'}</button>
-                <button type="button" role="menuitem" onClick={() => setAuthorMenu(null)}>Cancel</button>
-              </div>}
+              {showAuthor && <small className="bubble-author"><AvatarFace className="bubble-avatar" src={profiles[message.userId]?.avatar?.url} initials={initialsOf(message.author, '#')} />{highlightText(message.author, searchIsActive ? messageSearchText : '')}<button type="button" className="bubble-author-menu" aria-label={`Options for ${message.author}`} aria-haspopup="menu" aria-expanded={authorMenu?.messageId === message.id} onClick={() => setAuthorMenu({ messageId: message.id, userId: message.userId, displayName: message.author })}><Ellipsis size={13} /></button></small>}
+              {/* One menu per author means two bubbles of the same guest each rendered a copy; the id pins it to the bubble that opened it. */}
+              {showAuthor && authorMenu?.messageId === message.id && (
+                <AuthorPopMenu author={authorMenu} onBlock={() => blockThisGuest(authorMenu)} onClose={() => setAuthorMenu(null)} />
+              )}
               {message.content?.type === 'location' && <LocationMessage content={message.content} />}
               {message.content?.type === 'poll' && <PollCard message={message} session={session} socket={socket} onNotice={showNotice} />}
               {message.content?.type === 'contact' && <ContactCard content={message.content} />}
@@ -2010,8 +2110,8 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
             </div>
             <input ref={composeInputRef} className="compose-input" type="text" placeholder="Type a message…" aria-label="Type a message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={20000} />
             <div className="attach-wrap">
-              <button type="button" className="attach-button" aria-label="Add an attachment" aria-expanded={attachmentMenuOpen} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading}><Plus size={21} /></button>
-              {attachmentMenuOpen && <div className="attachment-menu" role="menu">
+              <button type="button" className="attach-button" aria-label="Add an attachment" aria-haspopup="menu" aria-expanded={attachmentMenuOpen} onClick={() => setAttachmentMenuOpen((open) => !open)} disabled={uploading}><Plus size={21} /></button>
+              {attachmentMenuOpen && <div ref={attachMenuRef} className="attachment-menu" role="menu">
                 <button type="button" role="menuitem" onClick={() => { galleryInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Image size={17} /><span>Photos & videos</span></button>
                 <button type="button" role="menuitem" onClick={() => { fileInputRef.current?.click(); setAttachmentMenuOpen(false) }}><FileText size={17} /><span>Choose files</span></button>
                 <button type="button" role="menuitem" onClick={() => { cameraInputRef.current?.click(); setAttachmentMenuOpen(false) }}><Camera size={17} /><span>Camera</span></button>
@@ -2022,10 +2122,10 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
               </div>}
             </div>
           </div>
-          <input ref={galleryInputRef} className="hidden-file-input" type="file" accept="image/*,video/*" multiple onChange={handlePickedFiles} />
-          <input ref={fileInputRef} className="hidden-file-input" type="file" multiple onChange={handlePickedFiles} />
+          <input ref={galleryInputRef} className="hidden-file-input" tabIndex={-1} type="file" accept="image/*,video/*" multiple onChange={handlePickedFiles} />
+          <input ref={fileInputRef} className="hidden-file-input" tabIndex={-1} type="file" multiple onChange={handlePickedFiles} />
           {/* `capture` is a request, not a guarantee: a desktop browser opens its file box. */}
-          <input ref={cameraInputRef} className="hidden-file-input" type="file" accept="image/*" capture="environment" onChange={handlePickedFiles} />
+          <input ref={cameraInputRef} className="hidden-file-input" tabIndex={-1} type="file" accept="image/*" capture="environment" onChange={handlePickedFiles} />
           {draft.trim()
             ? <button type="submit" className="send-button" aria-label="Send message" disabled={uploading}><Send size={18} /></button>
             : <button type="button" className={`voice-record-button${recording ? ' is-recording' : ''}`} aria-label={recording ? 'Stop and send voice message' : 'Record a voice message'} title={recording ? 'Stop and send voice message' : 'Record a voice message'} onClick={toggleVoiceRecording} disabled={uploading}>{recording ? <Square size={16} /> : <Mic size={18} />}</button>}
@@ -2079,6 +2179,8 @@ function CallWindow({ calls, chat }) {
     setMode(saved)
     setFrame(defaultFrame(saved, viewportSize()))
   }
+  // Docked is the one mode that claims aria-modal, so it is the one that must hold focus.
+  useDialogTrap(shellRef, { active: mode === 'docked', onClose: () => changeMode('floating') })
 
   const toggleFullscreen = async () => {
     if (document.fullscreenElement) {
@@ -2192,12 +2294,14 @@ function CallWindow({ calls, chat }) {
 }
 
 function JoinRoomDialog({ initialRoom, initialName, onClose, onJoin }) {
+  const sheetRef = useRef(null)
   const [displayName, setDisplayName] = useState(initialName || '')
   const [roomName, setRoomName] = useState(initialRoom || '')
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
   useBackDismiss(true, onClose)
+  useDialogTrap(sheetRef, { onClose })
 
   const submit = async (event) => {
     event.preventDefault()
@@ -2213,7 +2317,7 @@ function JoinRoomDialog({ initialRoom, initialName, onClose, onJoin }) {
 
   return (
     <div className="room-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="room-modal" role="dialog" aria-modal="true" aria-labelledby="room-modal-title">
+      <section ref={sheetRef} className="room-modal" role="dialog" aria-modal="true" aria-labelledby="room-modal-title">
         <button className="room-modal-close" type="button" aria-label="Close" onClick={onClose}><X size={18} /></button>
         <div className="room-modal-icon"><MessageCircle size={22} /></div>
         <p className="eyebrow">ROOM CHAT</p>
@@ -2407,6 +2511,8 @@ function UpdatesPage({ guest }) {
   const [now, setNow] = useState(() => Date.now())
   const noticeTimerRef = useRef(null)
   const fileInputRef = useRef(null)
+  const viewerRef = useRef(null)
+  const viewersRef = useRef(null)
 
   useEffect(() => () => window.clearTimeout(noticeTimerRef.current), [])
 
@@ -2547,6 +2653,8 @@ function UpdatesPage({ guest }) {
   const groups = groupFeed(statuses, now)
   const ordered = playOrder(statuses, now)
   const playing = openId ? ordered.find((card) => card.id === openId) : null
+  useDialogTrap(viewerRef, { active: Boolean(playing), onClose: () => setOpenId(null) })
+  useDialogTrap(viewersRef, { active: Boolean(viewers), onClose: () => setViewers(null) })
 
   const advanceCard = () => {
     const next = playing ? nextInPlay(ordered, playing.id) : null
@@ -2616,7 +2724,7 @@ function UpdatesPage({ guest }) {
             <button type="button" className="updates-add-button" aria-label="Add a text update" title="Add a text update" onClick={() => setComposerOpen((value) => !value)} disabled={posting}><Plus size={18} /></button>
           </div>
         </div>
-        <input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*,video/*" onChange={postMediaCard} />
+        <input ref={fileInputRef} className="hidden-file-input" tabIndex={-1} type="file" accept="image/*,video/*" onChange={postMediaCard} />
         {notice && <p className="updates-action-notice" role="status">{notice}</p>}
         {failure && <p className="feed-failure" role="alert"><AlertCircle size={14} />{failure}</p>}
         {posting && <p className="feed-loading">Posting your update…</p>}
@@ -2662,7 +2770,7 @@ function UpdatesPage({ guest }) {
       )}
 
       {playing && (
-        <div className="status-viewer" role="dialog" aria-modal="true" aria-label={`Update from ${playing.author?.displayName || (playing.mine ? 'you' : 'a guest')}`}>
+        <div ref={viewerRef} className="status-viewer" role="dialog" aria-modal="true" aria-label={`Update from ${playing.author?.displayName || (playing.mine ? 'you' : 'a guest')}`}>
           <div className="status-viewer-head">
             <span className="status-viewer-progress">{timeLeftLabel(playing.remainingMs)}</span>
             <button type="button" className="status-viewer-close" aria-label="Close update" onClick={() => setOpenId(null)}><X size={18} /></button>
@@ -2685,7 +2793,7 @@ function UpdatesPage({ guest }) {
       )}
 
       {viewers && (
-        <div className="status-viewers" role="dialog" aria-modal="true" aria-label="Guests who saw this update">
+        <div ref={viewersRef} className="status-viewers" role="dialog" aria-modal="true" aria-label="Guests who saw this update">
           <div className="status-viewers-head"><strong>Seen by</strong><button type="button" aria-label="Close" onClick={() => setViewers(null)}><X size={16} /></button></div>
           {viewers.loading ? <p className="feed-loading">Loading…</p> : (viewers.rows.length ? viewers.rows.map((row) => (
             <div className="status-viewer-row" key={row.userId}>

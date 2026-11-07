@@ -208,7 +208,9 @@ describe('room wiring of the cards', () => {
   });
 
   test('the plus sheet offers the three cards, so none of them is a dead end', () => {
-    const menuStart = APP_SOURCE.indexOf('<div className="attachment-menu"');
+    // Matched on the attribute, not the whole tag: the menu also carries a ref for its keyboard hook.
+    const menuStart = APP_SOURCE.indexOf('className="attachment-menu"');
+    expect(menuStart).toBeGreaterThan(-1);
     const menu = APP_SOURCE.slice(menuStart, APP_SOURCE.indexOf('</div>}', menuStart));
     expect(menu).toMatch(/setRichSheet\('poll'\)/);
     expect(menu).toMatch(/setRichSheet\('event'\)/);
