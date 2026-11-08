@@ -1301,3 +1301,282 @@ textarea:focus-visible,
 @keyframes attachment-fade{from{opacity:0}to{opacity:1}}
 @media(max-width:420px){.attachment-menu{padding-left:14px;padding-right:14px}.attachment-shortcuts{gap:3px}.attachment-shortcuts button{font-size:9px}.attachment-shortcuts button svg{padding:11px}.attachment-rich-actions{gap:5px}.attachment-rich-actions button{gap:4px;font-size:9px}}
 @media(prefers-reduced-motion:reduce){.attachment-backdrop,.attachment-menu{animation:none}}
+
+
+/* Room-first visual system adapted from the supplied responsive INchat mockup. */
+:root:not([data-theme]),
+[data-theme='light'] {
+  --bg: #edf2f0;
+  --surface: #ffffff;
+  --surface-2: #f2f6f4;
+  --elevated: #ffffff;
+  --ink: #172820;
+  --muted: #687b72;
+  --line: #e5ece8;
+  --accent: #087f68;
+  --accent-deep: #075e4e;
+  --accent-ink: #ffffff;
+  --teal: #087f68;
+  --teal-deep: #075e4e;
+  --shadow: 0 15px 42px rgba(25, 57, 46, .10);
+}
+
+.app-shell { background: var(--bg); }
+.app-header {
+  height: 72px;
+  padding-inline: clamp(18px, 3.2vw, 52px);
+  border-bottom-color: var(--line);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+.brand-lockup { gap: 9px; }
+.brand-lockup strong { font-size: 17px; }
+.brand-lockup .india-flag {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1;
+}
+.icon-button { border-radius: 50%; background: var(--surface-2); }
+.icon-button:hover { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+
+@media (min-width: 801px) {
+  .app-shell > .dashboard-shell {
+    width: 100%;
+    max-width: 1500px;
+    min-height: calc(100dvh - 72px);
+    padding: 16px 20px calc(88px + env(safe-area-inset-bottom));
+  }
+  .app-shell > .content-page {
+    width: 100%;
+    max-width: 1500px;
+    padding: 28px 20px calc(88px + env(safe-area-inset-bottom));
+  }
+  .dashboard-grid {
+    grid-template-columns: minmax(360px, 1.14fr) minmax(320px, .9fr);
+    gap: 16px;
+    min-height: min(720px, calc(100dvh - 176px));
+  }
+  .dashboard-grid:not(.chat-open) > .inbox-card,
+  .dashboard-grid:not(.chat-open) > .welcome-card { min-height: 0; }
+  .inbox-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    padding: 19px 20px 74px;
+    border-radius: 22px;
+  }
+  .room-list-title { margin: 0 0 14px; }
+  .room-list-title h2 { font-size: 18px; color: var(--ink); }
+  .room-list-title span { color: var(--muted); }
+  .room-add-button {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    color: var(--accent);
+  }
+  .search-wrap {
+    height: 42px;
+    margin-bottom: 1px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--surface-2);
+  }
+  .list-filters { margin-top: 10px; margin-bottom: 6px; gap: 7px; }
+  .list-filter { min-height: 31px; padding-inline: 12px; font-size: 11px; }
+  .chat-list { flex: 1; min-height: 0; overflow-y: auto; margin-top: 2px; }
+  .chat-item {
+    min-height: 68px;
+    margin: 4px 0;
+    padding: 10px 12px;
+    gap: 11px;
+    border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+    border-radius: 18px;
+    background: var(--surface);
+  }
+  .chat-item:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(22, 59, 47, .08); }
+  .chat-item.active { border-color: color-mix(in srgb, var(--accent) 25%, var(--line)); }
+  .chat-item .avatar { width: 43px; height: 43px; border-radius: 50%; }
+  .chat-topline strong { font-size: 12px; }
+  .chat-preview { font-size: 10px; }
+  .welcome-card {
+    min-width: 0;
+    min-height: 0;
+    padding: clamp(30px, 5vw, 72px);
+    border-radius: 22px;
+    background: radial-gradient(circle at 82% 13%, color-mix(in srgb, var(--accent) 10%, var(--surface)) 0, transparent 31%), var(--surface);
+  }
+  .welcome-orb { width: 48px; height: 48px; margin-bottom: 18px; border-radius: 14px; }
+  .welcome-card h2 { max-width: 380px; font-size: clamp(24px, 2.2vw, 31px); line-height: 1.2; }
+  .welcome-card > p:not(.eyebrow) { max-width: 380px; margin: 12px 0 17px; font-size: 11px; line-height: 1.65; }
+  .welcome-create-button { align-self: flex-start; min-height: 38px; margin: 0 0 20px; border-radius: 999px; }
+  .welcome-stats { gap: 22px; margin-top: 0; padding-top: 14px; }
+  .welcome-stats strong { font-size: 17px; }
+  .bottom-nav {
+    position: fixed;
+    z-index: 60;
+    bottom: 12px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: max-content;
+    min-width: 360px;
+    max-width: calc(100vw - 32px);
+    justify-content: center;
+    gap: 5px;
+    margin: 0;
+    padding: 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: 0 9px 26px rgba(23, 61, 48, .12);
+    backdrop-filter: blur(16px);
+  }
+  .bottom-nav a,
+  .bottom-nav a.active {
+    flex: 1;
+    min-width: 105px;
+    min-height: 48px;
+    padding: 6px 15px;
+    border-radius: 999px;
+    font-size: 10px;
+  }
+  .dashboard-grid.chat-open {
+    grid-template-columns: minmax(340px, min(var(--inbox-pane-width, calc((100% - 36px) / 2)), calc(100% - 366px))) 12px minmax(330px, 1fr);
+    min-height: 0;
+    height: min(820px, max(320px, calc(100dvh - 190px)));
+  }
+  .dashboard-grid.chat-open > .inbox-card { padding: 19px 14px 16px; }
+  .dashboard-grid.chat-open .chat-item { border-color: transparent; box-shadow: none; }
+  .dashboard-grid.chat-open .chat-item:hover { border-color: var(--line); }
+  .calls-card, .stories-card, .update-card { border-radius: 22px; }
+  .calls-card { padding: 20px; }
+  .calls-page .call-row {
+    min-height: 68px;
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px solid #28383c;
+    border-radius: 18px;
+    background: #172328;
+  }
+  .calls-page .call-row-copy strong { color: #edf5f0; }
+  .calls-page .call-row-copy span,
+  .calls-page .call-row-time { color: #a1b0a8; }
+  .calls-page .call-row-icon { background: #223136; color: #9ce6be; }
+}
+
+@media (max-width: 800px) {
+  .app-header { height: 64px; padding-inline: 16px; }
+  .brand-mark { width: 42px; height: 44px; flex-basis: 42px; }
+  .brand-map { width: 38px; height: 44px; }
+  .brand-lockup strong { font-size: 16px; }
+  .app-shell > .dashboard-shell {
+    min-height: calc(100dvh - 64px);
+    padding: 12px 12px calc(88px + env(safe-area-inset-bottom));
+  }
+  .dashboard-grid { display: block; min-height: calc(100dvh - 164px); }
+  .dashboard-grid:not(.chat-open) > .inbox-card {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100dvh - 164px);
+    padding: 14px 14px 24px;
+    border-radius: 20px;
+    overflow: hidden;
+  }
+  .dashboard-grid:not(.chat-open) > .inbox-card .chat-list { flex: 1; min-height: 80px; overflow-y: auto; }
+  .room-list-title { margin: 0 0 11px; }
+  .room-list-title h2 { font-size: 17px; }
+  .room-list-title span { font-size: 10px; }
+  .room-add-button { width: 36px; height: 36px; border-radius: 12px; }
+  .search-wrap { height: 40px; margin-bottom: 0; border-radius: 999px; }
+  .list-filters { margin: 10px 0 6px; gap: 7px; }
+  .list-filter { min-height: 30px; padding-inline: 11px; font-size: 10px; }
+  .chat-list { margin-top: 2px; }
+  .chat-item {
+    min-height: 68px;
+    margin: 4px 0;
+    padding: 9px 10px;
+    gap: 9px;
+    border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+    border-radius: 18px;
+    background: var(--surface);
+  }
+  .chat-item .avatar { width: 40px; height: 40px; border-radius: 50%; }
+  .chat-topline strong { font-size: 11px; }
+  .chat-preview { font-size: 9px; }
+  .welcome-card { display: none; }
+  .room-fab { right: 22px; bottom: calc(88px + env(safe-area-inset-bottom)); width: 50px; height: 50px; box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 30%, transparent); }
+  .bottom-nav {
+    position: fixed;
+    z-index: 60;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(430px, calc(100vw - 28px));
+    min-width: 0;
+    height: 60px;
+    flex: none;
+    gap: 2px;
+    margin: 0;
+    padding: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: 0 7px 24px rgba(23, 61, 48, .14);
+    backdrop-filter: blur(16px);
+  }
+  .bottom-nav a,
+  .bottom-nav a.active {
+    min-width: 0;
+    min-height: 50px;
+    padding: 6px 4px;
+    gap: 3px;
+    border-radius: 999px;
+    font-size: 9px;
+  }
+  .bottom-nav a svg { width: 18px; height: 18px; }
+  .calls-page .call-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 9px 8px;
+    border: 1px solid #28383c;
+    border-radius: 16px;
+    background: #172328;
+  }
+  .calls-page .call-row-copy strong { color: #edf5f0; }
+  .calls-page .call-row-copy span,
+  .calls-page .call-row-time { color: #a1b0a8; }
+  .calls-page .call-row-time { display: none; }
+  .calls-page .call-row-icon { background: #223136; color: #9ce6be; }
+  .dashboard-grid.chat-open { min-height: 100dvh; }
+  .dashboard-grid.chat-open .chat-preview-panel { border-radius: 0; }
+}
+
+@media (max-width: 430px) {
+  .app-header { height: 60px; padding-inline: 13px; }
+  .app-shell > .dashboard-shell { min-height: calc(100dvh - 60px); padding: 9px 9px calc(84px + env(safe-area-inset-bottom)); }
+  .dashboard-grid { min-height: calc(100dvh - 145px); }
+  .dashboard-grid:not(.chat-open) > .inbox-card { min-height: calc(100dvh - 145px); padding: 13px 11px 20px; border-radius: 18px; }
+  .room-list-title h2 { font-size: 16px; }
+  .chat-item { min-height: 64px; padding: 8px; border-radius: 17px; }
+  .chat-item .avatar { width: 38px; height: 38px; }
+  .bottom-nav { width: calc(100vw - 24px); height: 58px; bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .bottom-nav a, .bottom-nav a.active { min-height: 48px; font-size: 8px; }
+  .room-fab { right: 17px; bottom: calc(82px + env(safe-area-inset-bottom)); width: 48px; height: 48px; }
+  .calls-page .call-row { grid-template-columns: 31px minmax(0,1fr) auto; gap: 6px; padding: 8px 7px; }
+}
+
+[data-theme='dark'] .app-header { background: color-mix(in srgb, var(--surface) 94%, transparent); }
+[data-theme='dark'] .brand-lockup .india-flag { background: var(--surface-2); border-color: var(--line); }
+[data-theme='dark'] .bottom-nav { background: color-mix(in srgb, var(--surface) 94%, transparent); }
+[data-theme='dark'] .bottom-nav a.active { background: #243b31; color: #a3e9c4; }
+[data-theme='dark'] .calls-page .call-row { border-color: #28383c; background: #172328; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-item { transition: none; }
+}
