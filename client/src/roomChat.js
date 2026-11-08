@@ -149,7 +149,7 @@ export async function resolveGuest(displayName) {
 export function connectRoom(session, room) {
   return io({
     auth: { userId: session.userId, sessionToken: session.sessionToken, room },
-    transports: ['websocket', 'polling'],
+    transports: ['websocket'],
     reconnectionDelay: 500,
     reconnectionDelayMax: 5000
   })

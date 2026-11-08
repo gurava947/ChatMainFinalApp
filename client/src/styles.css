@@ -1777,3 +1777,6 @@ img.status-full { width: auto; height: auto; max-width: min(560px, 100%); max-he
 @media (prefers-reduced-motion: reduce) {
   .update-card-open { transition: none; }
 }
+
+/* Inputs intentionally do not draw decorative focus rings; keyboard navigation remains visible on controls. */
+input:focus, input:focus-visible, textarea:focus, textarea:focus-visible, select:focus, select:focus-visible { outline: none !important; box-shadow: none !important; }

@@ -43,7 +43,7 @@ function createRuntime(options = {}) {
       methods: ['GET', 'POST']
     },
     // WebSocket-first: polling fallback costs an extra handshake per client.
-    transports: ['websocket', 'polling'],
+    transports: ['websocket'],
     pingInterval: 25000,
     pingTimeout: 20000,
     // Long-form messages are text on the wire, so the packet budget has to

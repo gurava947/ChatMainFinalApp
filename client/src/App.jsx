@@ -2334,7 +2334,7 @@ function CallWindow({ calls, chat }) {
       <div className="call-controls">
         {calls.call.status === 'incoming' ? <><button type="button" className="call-accept" onClick={calls.acceptCall}><Phone size={18} /> Accept</button><button type="button" className="call-decline" onClick={calls.declineCall}><PhoneOff size={18} /> Decline</button></> : <>
           <button type="button" className={calls.muted ? 'control-muted' : ''} aria-label={calls.muted ? 'Unmute microphone' : 'Mute microphone'} onClick={calls.toggleMic} disabled={!calls.call.localStream}>{calls.muted ? <MicOff size={18} /> : <Mic size={18} />}</button>
-          {calls.call.mode === 'video' && <button type="button" className={calls.cameraOff ? 'control-muted' : ''} aria-label={calls.cameraOff ? 'Turn camera on' : 'Turn camera off'} onClick={calls.toggleCamera} disabled={!calls.call.localStream}>{calls.cameraOff ? <VideoOff size={18} /> : <Video size={18} />}</button>}
+          {calls.call.mode === 'video' && <button type="button" className={calls.cameraOff ? 'control-muted' : ''} aria-label={calls.cameraOff ? 'Turn camera on' : 'Turn camera off'} onClick={calls.toggleCamera} disabled={!calls.call.localStream}>{calls.cameraOff ? <VideoOff size={18} /> : <Video size={18} />}</button>}{calls.call.mode === 'video' && <button type="button" aria-label={`Switch to ${calls.cameraFacing === 'user' ? 'back' : 'front'} camera`} title={`Switch to ${calls.cameraFacing === 'user' ? 'back' : 'front'} camera`} onClick={calls.switchCamera} disabled={!calls.call.localStream}><RefreshCw size={18} /></button>}
           <button type="button" className="call-hangup control-end" aria-label="End call" onClick={calls.hangup}><PhoneOff size={18} /></button>
         </>}
       </div>

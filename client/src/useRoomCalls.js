@@ -20,9 +20,11 @@ export default function useRoomCalls(socket, roomId, session) {
   const [feedback, setFeedback] = useState('')
   const [muted, setMuted] = useState(false)
   const [cameraOff, setCameraOff] = useState(false)
+  const [cameraFacing, setCameraFacing] = useState('user')
   const callRef = useRef(null)
   const peerConnectionRef = useRef(null)
   const pendingIceRef = useRef([])
+  const cameraFacingRef = useRef('user')
   const remoteVideoRef = useRef(null)
   const remoteAudioRef = useRef(null)
   const localVideoRef = useRef(null)
@@ -283,7 +285,7 @@ export default function useRoomCalls(socket, roomId, session) {
     try {
       const localStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: mode === 'video' ? { facingMode: 'user' } : false,
+        video: mode === 'video' ? { facingMode: { ideal: cameraFacingRef.current } } : false,
       })
       const active = {
         callId: crypto.randomUUID(),
@@ -317,7 +319,7 @@ export default function useRoomCalls(socket, roomId, session) {
     try {
       const localStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: active.mode === 'video' ? { facingMode: 'user' } : false,
+        video: active.mode === 'video' ? { facingMode: { ideal: cameraFacingRef.current } } : false,
       })
       const next = { ...active, localStream, status: 'connecting' }
       updateCall(next)
@@ -356,6 +358,32 @@ export default function useRoomCalls(socket, roomId, session) {
     callRef.current?.localStream?.getVideoTracks().forEach((track) => { track.enabled = !nextOff })
     setCameraOff(nextOff)
   }
+  const switchCamera = async () => {
+    const active = callRef.current
+    if (!active?.localStream || active.mode !== 'video' || !navigator.mediaDevices?.getUserMedia) return
+    const nextFacing = cameraFacingRef.current === 'user' ? 'environment' : 'user'
+    try {
+      let stream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: nextFacing } }, audio: false })
+      } catch {
+        // Some browsers expose only one camera or ignore exact facing constraints.
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: nextFacing } }, audio: false })
+      }
+      const nextTrack = stream.getVideoTracks()[0]
+      if (!nextTrack) throw new Error('No camera track was available.')
+      const oldTrack = active.localStream.getVideoTracks()[0]
+      const sender = peerConnectionRef.current?.getSenders().find((item) => item.track?.kind === 'video')
+      if (sender) await sender.replaceTrack(nextTrack)
+      if (oldTrack) { active.localStream.removeTrack(oldTrack); oldTrack.stop() }
+      active.localStream.addTrack(nextTrack)
+      cameraFacingRef.current = nextFacing
+      setCameraFacing(nextFacing)
+      updateCall({ ...active })
+    } catch (error) {
+      setFeedback(error.message || 'Could not switch cameras. Check camera permissions.')
+    }
+  }
 
   return {
     peers,
@@ -377,5 +405,7 @@ export default function useRoomCalls(socket, roomId, session) {
     hangup,
     toggleMic,
     toggleCamera,
+    switchCamera,
+    cameraFacing,
   }
 }
