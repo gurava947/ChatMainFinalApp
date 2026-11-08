@@ -16,6 +16,7 @@ export default function useRoomCalls(socket, roomId, session) {
   const [peers, setPeers] = useState([])
   const [call, setCall] = useState(null)
   const [remoteStream, setRemoteStream] = useState(null)
+  const [remoteVideoReady, setRemoteVideoReady] = useState(false)
   const [pickerMode, setPickerMode] = useState(null)
   const [feedback, setFeedback] = useState('')
   const [muted, setMuted] = useState(false)
@@ -23,6 +24,7 @@ export default function useRoomCalls(socket, roomId, session) {
   const [cameraFacing, setCameraFacing] = useState('user')
   const cameraOffRef = useRef(false)
   const callRef = useRef(null)
+  const remoteStreamRef = useRef(null)
   const peerConnectionRef = useRef(null)
   const pendingIceRef = useRef([])
   const cameraFacingRef = useRef('user')
@@ -55,7 +57,9 @@ export default function useRoomCalls(socket, roomId, session) {
     }
     current?.localStream?.getTracks().forEach((track) => track.stop())
     pendingIceRef.current = []
+    remoteStreamRef.current = null
     setRemoteStream(null)
+    setRemoteVideoReady(false)
     setMuted(false)
     setCameraOff(false)
     callBeforeSignalDropRef.current = null
@@ -111,12 +115,20 @@ export default function useRoomCalls(socket, roomId, session) {
         })
       }
       connection.ontrack = (event) => {
-        const stream = event.streams?.[0] || new MediaStream([event.track])
+        let stream = event.streams?.[0] || remoteStreamRef.current
+        if (!stream) stream = new MediaStream()
+        if (!event.streams?.[0] && !stream.getTracks().some((track) => track.id === event.track.id)) {
+          stream.addTrack(event.track)
+        }
+        remoteStreamRef.current = stream
+        if (event.track.kind === 'video') setRemoteVideoReady(false)
         const video = remoteVideoRef.current
         if (video) {
           video.srcObject = stream
           const playback = video.play?.()
-          if (playback && typeof playback.catch === 'function') playback.catch(() => {})
+          if (playback && typeof playback.catch === 'function') {
+            playback.catch(() => setFeedback('Remote video arrived, but playback was blocked by the browser. Tap the video or check autoplay permissions.'))
+          }
         }
         setRemoteStream(stream)
       }
@@ -126,7 +138,10 @@ export default function useRoomCalls(socket, roomId, session) {
           if (current?.callId === active.callId) updateCall({ ...current, status: 'active' })
         } else if (connection.connectionState === 'failed') {
           const current = callRef.current
-          if (current?.callId === active.callId) updateCall({ ...current, status: 'failed' })
+          if (current?.callId === active.callId) {
+            updateCall({ ...current, status: 'failed' })
+            setFeedback('The media path could not connect. This network may require a TURN relay; check the deployment ICE/TURN configuration.')
+          }
         }
       }
       peerConnectionRef.current = connection
@@ -284,7 +299,8 @@ export default function useRoomCalls(socket, roomId, session) {
    * connection, so the elements are simply re-bound.
    */
   const reattachMedia = () => {
-    if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream
+    const currentRemoteStream = remoteStreamRef.current || remoteStream
+    if (remoteVideoRef.current && currentRemoteStream) remoteVideoRef.current.srcObject = currentRemoteStream
     if (remoteAudioRef.current && remoteStream) remoteAudioRef.current.srcObject = remoteStream
     if (localVideoRef.current && callRef.current?.localStream) localVideoRef.current.srcObject = callRef.current.localStream
   }
@@ -481,6 +497,9 @@ export default function useRoomCalls(socket, roomId, session) {
     peers,
     call,
     remoteStream,
+    remoteVideoReady,
+    markRemoteVideoReady: () => setRemoteVideoReady(true),
+    markRemoteVideoWaiting: () => setRemoteVideoReady(false),
     pickerMode,
     feedback,
     muted,

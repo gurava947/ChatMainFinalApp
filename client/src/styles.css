@@ -367,6 +367,7 @@
 .call-video-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:radial-gradient(circle at 50% 40%,#24433b,#09110f 70%);color:#fff}
 .call-video-placeholder span,.audio-call-avatar{display:grid;place-items:center;width:76px;height:76px;border-radius:50%;background:linear-gradient(140deg,#43b4a3,#247f91);color:#fff;font-size:25px;font-weight:800}
 .call-video-placeholder strong{font-size:12px}
+.call-video-placeholder small{max-width:80%;color:rgba(255,255,255,.72);font-size:11px;text-align:center}
 .audio-call-stage{min-height:235px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:var(--surface-2)}
 .audio-call-avatar{width:82px;height:82px;margin-bottom:7px}
 .audio-call-stage>strong{font-size:16px}

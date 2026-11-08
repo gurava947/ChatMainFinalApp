@@ -2294,9 +2294,9 @@ function CallWindow({ calls, chat }) {
 
   const stage = calls.call.mode === 'video' ? (
     <div className="call-video-stage">
-      <video ref={calls.remoteVideoRef} className="remote-call-video" autoPlay playsInline />
+      <video ref={calls.remoteVideoRef} className="remote-call-video" autoPlay playsInline onPlaying={calls.markRemoteVideoReady} onWaiting={calls.markRemoteVideoWaiting} />
       <video ref={calls.localVideoRef} className="local-call-video" autoPlay muted playsInline />
-      {!calls.remoteStream && <div className="call-video-placeholder"><span>{calls.call.peerName.slice(0, 1).toUpperCase()}</span><strong>{calls.call.status === 'incoming' ? 'Video call' : 'Waiting for video…'}</strong></div>}
+      {!calls.remoteVideoReady && <div className="call-video-placeholder"><span>{calls.call.peerName.slice(0, 1).toUpperCase()}</span><strong>{calls.call.status === 'incoming' ? 'Video call' : calls.call.status === 'failed' ? 'Video connection failed' : 'Connecting video…'}</strong><small>{calls.call.status === 'failed' ? 'A TURN relay may be required on this network.' : 'Waiting for the first video frame…'}</small></div>}
     </div>
   ) : (
     <div className="audio-call-stage">

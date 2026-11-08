@@ -195,7 +195,19 @@ describe('WebRTC media and signaling recovery', () => {
   test('remote tracks bind to the video element and attempt playback', () => {
     expect(CALL_HOOK_SOURCE).toMatch(/video\.srcObject = stream/);
     expect(CALL_HOOK_SOURCE).toMatch(/video\.play\?\.\(\)/);
-    expect(APP_SOURCE).toMatch(/<video ref=\{calls\.remoteVideoRef\} className="remote-call-video" autoPlay playsInline \/>/);
+    expect(APP_SOURCE).toMatch(/<video ref=\{calls\.remoteVideoRef\} className="remote-call-video" autoPlay playsInline onPlaying=\{calls\.markRemoteVideoReady\} onWaiting=\{calls\.markRemoteVideoWaiting\} \/>/);
+  });
+
+  test('the waiting placeholder remains until the browser reports a playing video frame', () => {
+    expect(CALL_HOOK_SOURCE).toMatch(/setRemoteVideoReady\(false\)/);
+    expect(APP_SOURCE).toMatch(/!calls\.remoteVideoReady && <div className="call-video-placeholder"/);
+    expect(APP_SOURCE).toMatch(/onPlaying=\{calls\.markRemoteVideoReady\}/);
+  });
+
+  test('a failed media path gives actionable TURN guidance instead of leaving a blank stage', () => {
+    expect(CALL_HOOK_SOURCE).toMatch(/media path could not connect[\s\S]*TURN relay/);
+    expect(APP_SOURCE).toMatch(/Video connection failed/);
+    expect(APP_SOURCE).toMatch(/A TURN relay may be required on this network/);
   });
 
   test('camera switch reads current camera-off state after permission resolves', () => {
