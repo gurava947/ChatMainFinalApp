@@ -1580,3 +1580,200 @@ textarea:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .chat-item { transition: none; }
 }
+
+
+/* WhatsApp-like Updates: channels are intentionally absent; statuses sit in a left-aligned story rail. */
+.updates-page {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+.updates-page > .updates-toolbar-card { order: 1; min-width: 0; }
+.updates-page > .updates-live-list {
+  order: 2;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 2px 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 35%, var(--line)) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.updates-page > .status-composer { order: 3; min-width: 0; max-width: 100%; }
+.updates-live-list > .update-card {
+  position: relative;
+  display: block;
+  flex: 0 0 clamp(116px, 15vw, 154px);
+  width: clamp(116px, 15vw, 154px);
+  height: clamp(158px, 20vw, 204px);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface-2);
+  box-shadow: 0 7px 18px rgba(20, 48, 39, .1);
+  scroll-snap-align: start;
+}
+.update-card-open {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  color: #fff;
+  text-align: left;
+  background: #24322f;
+}
+.update-card-open::after {
+  content: "";
+  position: absolute;
+  inset: 30% 0 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0%, rgba(5, 14, 12, .18) 34%, rgba(5, 14, 12, .78) 100%);
+}
+.update-card-open:hover { background: #24322f; transform: translateY(-2px); }
+.update-card-open:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.update-card-open > .update-avatar {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  left: 10px;
+  width: 34px;
+  height: 34px;
+  border: 2px solid rgba(255,255,255,.92);
+  border-radius: 50%;
+  box-shadow: 0 2px 9px rgba(0,0,0,.3);
+  font-size: 11px;
+}
+.update-card-open > .update-avatar img { border-radius: 50%; }
+.update-card-open > .update-avatar.is-unseen::after { inset: -5px; border-color: #29c879; border-radius: 50%; }
+.update-card-open > .update-card-copy {
+  position: absolute;
+  z-index: 1;
+  right: 9px;
+  bottom: 11px;
+  left: 10px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,.45);
+}
+.update-card-open > .update-card-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.update-card-open > .update-card-copy span { overflow: hidden; color: rgba(255,255,255,.82); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.update-card-open > .update-card-strip {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(145deg, #64a79a, #243e3a);
+}
+.update-card-open .status-card { width: 100%; height: 100%; }
+.update-card-open .status-card p { font-size: 12px; }
+.update-card-open .status-card video,
+.update-card-open .status-card img { object-fit: cover; }
+.update-card-actions {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 7px;
+  display: flex;
+  gap: 4px;
+  padding: 0;
+}
+.update-card-actions button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 7px;
+  border-radius: 999px;
+  background: rgba(8, 20, 17, .62);
+  color: #fff;
+  font-size: 9px;
+  backdrop-filter: blur(8px);
+}
+.update-card-actions button:hover { background: rgba(8,20,17,.82); color:#fff; }
+.status-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: 100vw;
+  width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+.status-viewer-head,
+.status-viewer-foot { min-width: 0; }
+.status-viewer-body { min-width: 0; min-height: 0; overflow: hidden; }
+.status-full {
+  box-sizing: border-box;
+  width: auto;
+  max-width: min(560px, 100%);
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+}
+.status-full.status-text-card { width: min(560px, 100%); max-height: 100%; overflow: auto; }
+video.status-full,
+img.status-full { width: auto; height: auto; max-width: min(560px, 100%); max-height: 100%; }
+@media (max-width: 800px) {
+  .updates-page { gap: 12px; }
+  .updates-toolbar-card { padding: 15px 14px; border-radius: 18px; }
+  .updates-toolbar-card .section-title { gap: 8px; }
+  .updates-page > .updates-live-list {
+    gap: 10px;
+    margin-inline: -2px;
+    width: calc(100% + 4px);
+    padding: 2px 2px 9px;
+    scroll-snap-type: x proximity;
+  }
+  .updates-live-list > .update-card {
+    flex-basis: clamp(112px, 31vw, 142px);
+    width: clamp(112px, 31vw, 142px);
+    height: clamp(156px, 43vw, 188px);
+    border-radius: 16px;
+  }
+  .status-viewer { grid-template-rows: auto minmax(0,1fr) auto; padding: max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left)); }
+  .status-viewer-body { padding: 8px 0; }
+  .status-full.status-text-card { min-height: min(420px, 60dvh); padding: 22px; }
+}
+@media (max-width: 430px) {
+  .updates-toolbar-card { padding: 13px 12px; }
+  .updates-toolbar-card .section-title h2 { font-size: 17px; }
+  .updates-live-list > .update-card { flex-basis: 116px; width: 116px; height: 164px; }
+  .update-card-open > .update-avatar { top: 9px; left: 9px; width: 31px; height: 31px; }
+  .update-card-open > .update-card-copy { bottom: 9px; }
+  .update-card-open > .update-card-copy strong { font-size: 11px; }
+}
+[data-theme='dark'] .updates-live-list > .update-card { box-shadow: 0 8px 20px rgba(0,0,0,.24); }
+@media (prefers-reduced-motion: reduce) {
+  .update-card-open { transition: none; }
+}
