@@ -16,7 +16,9 @@ const ENV_KEYS = [
   'VERCEL_URL',
   'VERCEL_PROJECT_PRODUCTION_URL',
   'UPSTASH_REDIS_REST_URL',
-  'UPSTASH_REDIS_REST_TOKEN'
+  'UPSTASH_REDIS_REST_TOKEN',
+  'TURN_URLS',
+  'TURN_SHARED_SECRET'
 ];
 
 /**
@@ -132,5 +134,38 @@ describe('shared-store gate', () => {
   it('still makes a development run choose a store', () => {
     const { error } = loadEnv({ NODE_ENV: 'development' });
     expect(error.message).toContain('REDIS_URL is required unless USE_MEMORY_STORE=true');
+  });
+
+  it('requires a server shared secret when TURN endpoints are configured', () => {
+    const { error } = loadEnv({
+      NODE_ENV: 'test',
+      USE_MEMORY_STORE: 'true',
+      TURN_URLS: 'turn:turn.example.test:3478'
+    });
+    expect(error.message).toContain('TURN_SHARED_SECRET is required');
+  });
+
+  it('accepts REST-auth TURN configuration', () => {
+    const { env, error } = loadEnv({
+      NODE_ENV: 'test',
+      USE_MEMORY_STORE: 'true',
+      TURN_URLS: 'turn:turn.example.test:3478,turns:turn.example.test:5349',
+      TURN_SHARED_SECRET: 'at-least-sixteen-character-secret'
+    });
+    expect(error).toBeNull();
+    expect(env.TURN_URLS).toContain('turn:turn.example.test:3478');
+    expect(env.TURN_SHARED_SECRET).toBe('at-least-sixteen-character-secret');
+  });
+
+  it('treats empty optional TURN values as unset', () => {
+    const { env, error } = loadEnv({
+      NODE_ENV: 'test',
+      USE_MEMORY_STORE: 'true',
+      TURN_URLS: '',
+      TURN_SHARED_SECRET: ''
+    });
+    expect(error).toBeNull();
+    expect(env.TURN_URLS).toBeUndefined();
+    expect(env.TURN_SHARED_SECRET).toBeUndefined();
   });
 });

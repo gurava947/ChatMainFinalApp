@@ -22,6 +22,7 @@ const { mediaUploadRouter } = require('./media');
 const { createProfileService } = require('../services/profile-service');
 const { createCallService } = require('../services/call-service');
 const { createStatusService } = require('../services/status-service');
+const { createIceServers } = require('../utils/rtc-config');
 
 const sessionHeaderSchema = z.string().uuid();
 const sessionTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -43,7 +44,7 @@ function requireSession({ chat }) {
   };
 }
 
-function apiRouter({ chat, store, limiters, media, logger, io }) {
+function apiRouter({ chat, store, limiters, media, logger, io, env }) {
   const router = express.Router();
   /** Profiles need the media plumbing, so without an upload service there is no picture to set. */
   const profile = media ? createProfileService({ store, media, chat }) : null;
@@ -66,6 +67,15 @@ function apiRouter({ chat, store, limiters, media, logger, io }) {
   });
 
   const guard = requireSession({ chat });
+
+  router.get('/rtc-config', guard, limiters.reads, (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ iceServers: createIceServers({
+      turnUrls: env.TURN_URLS,
+      turnSharedSecret: env.TURN_SHARED_SECRET,
+      userId: req.session.userId
+    }) });
+  });
 
   router.get('/rooms/:room/access', guard, async (req, res, next) => {
     try {

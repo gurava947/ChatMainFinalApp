@@ -80,6 +80,22 @@ describe('session endpoint', () => {
   });
 });
 
+describe('RTC ICE configuration', () => {
+  test('requires a valid app session', async () => {
+    const res = await request(ctx.app).get('/api/rtc-config');
+    expect(res.status).toBe(401);
+  });
+
+  test('returns baseline STUN configuration without caching or leaking TURN secrets', async () => {
+    const userId = await newSession();
+    const res = await request(ctx.app).get('/api/rtc-config').set(sessionHeaders(userId));
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body.iceServers).toEqual([{ urls: 'stun:stun.l.google.com:19302' }]);
+    expect(JSON.stringify(res.body)).not.toContain('TURN_SHARED_SECRET');
+  });
+});
+
 describe('room endpoints', () => {
   test('require a valid session id', async () => {
     const res = await request(ctx.app).get('/api/rooms/general/messages');

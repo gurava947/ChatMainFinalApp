@@ -127,7 +127,7 @@ function createApp({ chat, store, redis, media, logger, env, ensureStore, io }) 
     })
   };
 
-  app.use('/api', awaitStore, limiters.global, apiRouter({ chat, store, limiters, media, logger, io }));
+  app.use('/api', awaitStore, limiters.global, apiRouter({ chat, store, limiters, media, logger, io, env }));
 
   // Downloads are capability URLs, so they bypass the session guard but not
   // the limiter; media ids must not be enumerable by brute force.

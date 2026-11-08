@@ -1,6 +1,6 @@
 {
   "name": "groupchat-realtime",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Production-grade real-time group chat (Express + Socket.io + Redis)",
   "license": "MIT",

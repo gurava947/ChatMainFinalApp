@@ -35,6 +35,8 @@ const schema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   CORS_ORIGIN: z.string().default('http://localhost:8080'),
   REDIS_URL: z.string().optional(),
+  TURN_URLS: z.preprocess((value) => value === '' ? undefined : value, z.string().optional()),
+  TURN_SHARED_SECRET: z.preprocess((value) => value === '' ? undefined : value, z.string().min(16).optional()),
   USE_MEMORY_STORE: boolFromEnv.default(false),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().min(1000).default(60000),
   RATE_LIMIT_API_MAX: z.coerce.number().int().min(1).default(120),
@@ -77,6 +79,16 @@ if (!parsed.success) {
 }
 
 const env = parsed.data;
+
+if (env.TURN_URLS && !env.TURN_SHARED_SECRET) {
+  throw new Error('TURN_SHARED_SECRET is required when TURN_URLS is configured.');
+}
+if (!env.TURN_URLS && env.TURN_SHARED_SECRET) {
+  throw new Error('TURN_URLS is required when TURN_SHARED_SECRET is configured.');
+}
+if (env.TURN_URLS && env.TURN_URLS.split(',').some((url) => !/^turns?:/i.test(url.trim()))) {
+  throw new Error('TURN_URLS must be a comma-separated list of turn: or turns: URLs.');
+}
 
 env.INSTANCE_ID = process.env.INSTANCE_ID || process.env.HOSTNAME || `local-${process.pid}`;
 

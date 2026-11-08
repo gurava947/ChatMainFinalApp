@@ -103,8 +103,25 @@ export default function useRoomCalls(socket, roomId, session) {
       })
     }
 
-    const createPeerConnection = (active) => {
-      const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+    const createPeerConnection = async (active) => {
+      let iceServers = ICE_SERVERS
+      if (session?.userId && session?.sessionToken) {
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 2500)
+        try {
+          const response = await fetch('/api/rtc-config', {
+            headers: { 'X-Session-Id': session.userId, 'X-Session-Token': session.sessionToken },
+            cache: 'no-store',
+            signal: controller.signal
+          })
+          if (response.ok) {
+            const config = await response.json()
+            if (Array.isArray(config.iceServers) && config.iceServers.length) iceServers = config.iceServers
+          }
+        } catch { /* signaling still works with STUN if the optional config endpoint is unavailable */ }
+        finally { window.clearTimeout(timeout) }
+      }
+      const connection = new RTCPeerConnection({ iceServers })
       active.localStream?.getTracks().forEach((track) => connection.addTrack(track, active.localStream))
       connection.onicecandidate = (event) => {
         if (!event.candidate) return
@@ -160,7 +177,7 @@ export default function useRoomCalls(socket, roomId, session) {
       if (!active || active.direction !== 'outgoing' || active.callId !== signal.callId || active.peerSocketId !== signal.fromSocketId) return
       try {
         updateCall({ ...active, status: 'connecting' })
-        const connection = createPeerConnection(active)
+        const connection = await createPeerConnection(active)
         const offer = await connection.createOffer()
         await connection.setLocalDescription(offer)
         socket.emit('call:offer', {
@@ -178,7 +195,7 @@ export default function useRoomCalls(socket, roomId, session) {
       const active = callRef.current
       if (!active || active.direction !== 'incoming' || active.callId !== signal.callId || active.peerSocketId !== signal.fromSocketId) return
       try {
-        const connection = peerConnectionRef.current || createPeerConnection(active)
+        const connection = peerConnectionRef.current || await createPeerConnection(active)
         await connection.setRemoteDescription(new RTCSessionDescription(signal.description))
         await flushIce(connection)
         const answer = await connection.createAnswer()

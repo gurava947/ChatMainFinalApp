@@ -410,6 +410,12 @@ to the TCP connection string before the first deploy, whether the database came 
 from the Upstash console by hand; without it the function cannot load and every request answers
 `500 FUNCTION_INVOCATION_FAILED`. Never commit the live Redis URL.
 
+For video calls across restrictive NAT/firewalls, also provision a coturn-compatible TURN service and set
+`TURN_URLS` plus its REST-auth `TURN_SHARED_SECRET` in Vercel Environment Variables (Production and Preview).
+The app issues ten-minute per-session credentials from `/api/rtc-config`; never put the shared secret in a
+`VITE_*` variable or commit it. Without a TURN service the app falls back to STUN, which can work on
+permissive networks but cannot relay media through every firewall.
+
 Same ephemeral-disk caveat as Render - attachments live in `/tmp` and vanish with the instance, so point
 `MEDIA_*` at object storage before relying on them. For an always-on socket server with no such
 constraints, use the Render or Docker/Kubernetes path above.
