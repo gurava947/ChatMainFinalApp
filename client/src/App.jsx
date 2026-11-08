@@ -2204,6 +2204,7 @@ function CallWindow({ calls, chat }) {
   const activeAtRef = useRef(null)
 
   useEffect(() => {
+    if (calls.call?.status === 'reconnecting') return undefined
     if (calls.call?.status !== 'active') {
       activeAtRef.current = null
       return undefined

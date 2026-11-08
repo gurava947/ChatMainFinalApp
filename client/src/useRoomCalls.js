@@ -21,11 +21,15 @@ export default function useRoomCalls(socket, roomId, session) {
   const [muted, setMuted] = useState(false)
   const [cameraOff, setCameraOff] = useState(false)
   const [cameraFacing, setCameraFacing] = useState('user')
+  const cameraOffRef = useRef(false)
   const callRef = useRef(null)
   const peerConnectionRef = useRef(null)
   const pendingIceRef = useRef([])
   const cameraFacingRef = useRef('user')
+  const cameraSwitchRequestRef = useRef(0)
+  const cameraSwitchPendingRef = useRef(false)
   const callBeforeSignalDropRef = useRef(null)
+  const signalDroppedRef = useRef(false)
   const remoteVideoRef = useRef(null)
   const remoteAudioRef = useRef(null)
   const localVideoRef = useRef(null)
@@ -38,6 +42,10 @@ export default function useRoomCalls(socket, roomId, session) {
   const cleanupLocal = () => {
     const current = callRef.current
     const connection = peerConnectionRef.current
+    cameraSwitchRequestRef.current += 1
+    cameraSwitchPendingRef.current = false
+    cameraOffRef.current = false
+    signalDroppedRef.current = false
     peerConnectionRef.current = null
     if (connection) {
       connection.onicecandidate = null
@@ -104,6 +112,12 @@ export default function useRoomCalls(socket, roomId, session) {
       }
       connection.ontrack = (event) => {
         const stream = event.streams?.[0] || new MediaStream([event.track])
+        const video = remoteVideoRef.current
+        if (video) {
+          video.srcObject = stream
+          const playback = video.play?.()
+          if (playback && typeof playback.catch === 'function') playback.catch(() => {})
+        }
         setRemoteStream(stream)
       }
       connection.onconnectionstatechange = () => {
@@ -206,19 +220,30 @@ export default function useRoomCalls(socket, roomId, session) {
 
     const onSignalDisconnect = () => {
       const current = callRef.current
-      if (!current || !['calling', 'connecting', 'reconnecting'].includes(current.status)) return
+      if (!current || current.status === 'incoming' || current.status === 'failed') return
+      signalDroppedRef.current = true
       if (current.status !== 'reconnecting') callBeforeSignalDropRef.current = current.status
       updateCall({ ...current, status: 'reconnecting' })
     }
     const onSignalReconnect = () => {
       const current = callRef.current
-      if (!current || current.status !== 'reconnecting') return
-      const recoveredStatus = callBeforeSignalDropRef.current || 'connecting'
+      if (!signalDroppedRef.current) return
+      signalDroppedRef.current = false
+      if (!current || current.status === 'incoming') {
+        callBeforeSignalDropRef.current = null
+        return
+      }
+      const previousStatus = callBeforeSignalDropRef.current
       callBeforeSignalDropRef.current = null
       const connection = peerConnectionRef.current
-      // The peer media path is independent from Socket.IO. Preserve an already
-      // established call; otherwise restore its negotiation state after signaling recovers.
-      updateCall({ ...current, status: connection?.connectionState === 'connected' ? 'active' : recoveredStatus })
+      const peerState = connection?.connectionState
+      const recoveredStatus = peerState === 'connected' ? 'active'
+        : peerState === 'failed' || peerState === 'closed' ? 'failed'
+          : peerState === 'disconnected' ? 'connecting'
+            : previousStatus || 'connecting'
+      // Signaling and media recover independently; derive call status from the
+      // peer connection instead of assuming the pre-disconnect state survived.
+      updateCall({ ...current, status: recoveredStatus })
     }
     socket.on('disconnect', onSignalDisconnect)
     socket.on('connect', onSignalReconnect)
@@ -380,41 +405,75 @@ export default function useRoomCalls(socket, roomId, session) {
   }
 
   const toggleCamera = () => {
-    const nextOff = !cameraOff
+    const nextOff = !cameraOffRef.current
+    cameraOffRef.current = nextOff
     callRef.current?.localStream?.getVideoTracks().forEach((track) => { track.enabled = !nextOff })
     setCameraOff(nextOff)
   }
   const switchCamera = async () => {
     const active = callRef.current
-    if (!active?.localStream || active.mode !== 'video' || !navigator.mediaDevices?.getUserMedia) return
+    if (!active?.localStream || active.mode !== 'video' || !navigator.mediaDevices?.getUserMedia || cameraSwitchPendingRef.current) return
+    cameraSwitchPendingRef.current = true
+    const requestId = ++cameraSwitchRequestRef.current
     const nextFacing = cameraFacingRef.current === 'user' ? 'environment' : 'user'
+    let stream = null
+    let nextTrack = null
+    let oldTrack = null
+    let sender = null
+    let senderReplaced = false
     try {
-      let stream
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: nextFacing } }, audio: false })
       } catch {
         // Some browsers expose only one camera or ignore exact facing constraints.
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: nextFacing } }, audio: false })
       }
-      const nextTrack = stream.getVideoTracks()[0]
+      nextTrack = stream.getVideoTracks()[0]
       if (!nextTrack) throw new Error('No camera track was available.')
-      const latest = callRef.current
-      if (!latest || latest.callId !== active.callId || latest.localStream !== active.localStream) {
-        nextTrack.stop()
+      const isCurrentCall = () => {
+        const latest = callRef.current
+        return cameraSwitchRequestRef.current === requestId
+          && latest?.callId === active.callId
+          && latest.localStream === active.localStream
+      }
+      if (!isCurrentCall()) {
+        stream.getTracks().forEach((track) => track.stop())
         return
       }
-      // A flip must not silently unmute a camera the user had switched off.
-      nextTrack.enabled = !cameraOff
-      const oldTrack = active.localStream.getVideoTracks()[0]
-      const sender = peerConnectionRef.current?.getSenders().find((item) => item.track?.kind === 'video')
-      if (sender) await sender.replaceTrack(nextTrack)
-      if (oldTrack) { active.localStream.removeTrack(oldTrack); oldTrack.stop() }
+      // Read after the permission prompt resolves so a concurrent camera toggle wins.
+      nextTrack.enabled = !cameraOffRef.current
+      oldTrack = active.localStream.getVideoTracks()[0]
+      sender = peerConnectionRef.current?.getSenders().find((item) => item.track?.kind === 'video')
+      if (sender) {
+        await sender.replaceTrack(nextTrack)
+        senderReplaced = true
+      }
+      if (!isCurrentCall()) {
+        if (senderReplaced) {
+          try { await sender.replaceTrack(oldTrack?.readyState === 'live' ? oldTrack : null) } catch { /* peer connection may already be closed */ }
+        }
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
+      nextTrack.enabled = !cameraOffRef.current
       active.localStream.addTrack(nextTrack)
+      if (oldTrack) active.localStream.removeTrack(oldTrack)
       cameraFacingRef.current = nextFacing
       setCameraFacing(nextFacing)
       updateCall({ ...active })
+      nextTrack = null
+      if (oldTrack) oldTrack.stop()
     } catch (error) {
-      setFeedback(error.message || 'Could not switch cameras. Check camera permissions.')
+      if (senderReplaced) {
+        try { await sender.replaceTrack(oldTrack?.readyState === 'live' ? oldTrack : null) } catch { /* peer connection may already be closed */ }
+      }
+      if (nextTrack && active.localStream.getTracks().includes(nextTrack)) active.localStream.removeTrack(nextTrack)
+      stream?.getTracks().forEach((track) => track.stop())
+      if (cameraSwitchRequestRef.current === requestId) {
+        setFeedback(error.message || 'Could not switch cameras. Check camera permissions.')
+      }
+    } finally {
+      if (cameraSwitchRequestRef.current === requestId) cameraSwitchPendingRef.current = false
     }
   }
 

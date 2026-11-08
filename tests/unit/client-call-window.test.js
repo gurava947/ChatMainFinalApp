@@ -7,6 +7,7 @@ const path = require('node:path');
 const { loadCallWindow } = require('../helpers/load-client-module');
 
 const APP_SOURCE = fs.readFileSync(path.join(__dirname, '..', '..', 'client', 'src', 'App.jsx'), 'utf8');
+const CALL_HOOK_SOURCE = fs.readFileSync(path.join(__dirname, '..', '..', 'client', 'src', 'useRoomCalls.js'), 'utf8');
 
 let win;
 const viewport = { width: 1000, height: 800 };
@@ -186,5 +187,31 @@ describe('the call window component', () => {
   test('the timer starts when the call actually connects, not when it is dialled', () => {
     expect(APP_SOURCE).toMatch(/calls\.call\?\.status !== 'active'/);
     expect(APP_SOURCE).toMatch(/activeAtRef\.current \|\|= Date\.now\(\)/);
+    expect(APP_SOURCE).toMatch(/calls\.call\?\.status === 'reconnecting'\) return undefined/);
+  });
+});
+
+describe('WebRTC media and signaling recovery', () => {
+  test('remote tracks bind to the video element and attempt playback', () => {
+    expect(CALL_HOOK_SOURCE).toMatch(/video\.srcObject = stream/);
+    expect(CALL_HOOK_SOURCE).toMatch(/video\.play\?\.\(\)/);
+    expect(APP_SOURCE).toMatch(/<video ref=\{calls\.remoteVideoRef\} className="remote-call-video" autoPlay playsInline \/>/);
+  });
+
+  test('camera switch reads current camera-off state after permission resolves', () => {
+    expect(CALL_HOOK_SOURCE).toMatch(/nextTrack\.enabled = !cameraOffRef\.current/);
+    expect(CALL_HOOK_SOURCE).toMatch(/cameraOffRef\.current = nextOff/);
+  });
+
+  test('failed replaceTrack paths stop acquired tracks and restore the previous sender track', () => {
+    expect(CALL_HOOK_SOURCE).toMatch(/await sender\.replaceTrack\(nextTrack\)/);
+    expect(CALL_HOOK_SOURCE).toMatch(/sender\.replaceTrack\(oldTrack\?\.readyState === 'live' \? oldTrack : null\)/);
+    expect(CALL_HOOK_SOURCE).toMatch(/stream\?\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
+  });
+
+  test('socket reconnect derives the restored status from RTCPeerConnection state', () => {
+    expect(CALL_HOOK_SOURCE).toMatch(/peerState === 'connected' \? 'active'/);
+    expect(CALL_HOOK_SOURCE).toMatch(/peerState === 'failed' \|\| peerState === 'closed' \? 'failed'/);
+    expect(CALL_HOOK_SOURCE).toMatch(/peerState === 'disconnected' \? 'connecting'/);
   });
 });
