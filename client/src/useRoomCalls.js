@@ -25,6 +25,7 @@ export default function useRoomCalls(socket, roomId, session) {
   const peerConnectionRef = useRef(null)
   const pendingIceRef = useRef([])
   const cameraFacingRef = useRef('user')
+  const callBeforeSignalDropRef = useRef(null)
   const remoteVideoRef = useRef(null)
   const remoteAudioRef = useRef(null)
   const localVideoRef = useRef(null)
@@ -49,6 +50,7 @@ export default function useRoomCalls(socket, roomId, session) {
     setRemoteStream(null)
     setMuted(false)
     setCameraOff(false)
+    callBeforeSignalDropRef.current = null
     updateCall(null)
   }
 
@@ -202,6 +204,24 @@ export default function useRoomCalls(socket, roomId, session) {
       cleanupLocal()
     }
 
+    const onSignalDisconnect = () => {
+      const current = callRef.current
+      if (!current || !['calling', 'connecting', 'reconnecting'].includes(current.status)) return
+      if (current.status !== 'reconnecting') callBeforeSignalDropRef.current = current.status
+      updateCall({ ...current, status: 'reconnecting' })
+    }
+    const onSignalReconnect = () => {
+      const current = callRef.current
+      if (!current || current.status !== 'reconnecting') return
+      const recoveredStatus = callBeforeSignalDropRef.current || 'connecting'
+      callBeforeSignalDropRef.current = null
+      const connection = peerConnectionRef.current
+      // The peer media path is independent from Socket.IO. Preserve an already
+      // established call; otherwise restore its negotiation state after signaling recovers.
+      updateCall({ ...current, status: connection?.connectionState === 'connected' ? 'active' : recoveredStatus })
+    }
+    socket.on('disconnect', onSignalDisconnect)
+    socket.on('connect', onSignalReconnect)
     socket.on('presence', refreshPeers)
     socket.on('call:incoming', onIncoming)
     socket.on('call:accepted', onAccepted)
@@ -212,6 +232,8 @@ export default function useRoomCalls(socket, roomId, session) {
     socket.on('call:end', onEnded)
 
     return () => {
+      socket.off('disconnect', onSignalDisconnect)
+      socket.off('connect', onSignalReconnect)
       socket.off('presence', refreshPeers)
       socket.off('call:incoming', onIncoming)
       socket.off('call:accepted', onAccepted)
@@ -312,6 +334,10 @@ export default function useRoomCalls(socket, roomId, session) {
 
   const acceptCall = async () => {
     const active = callRef.current
+    if (!socket?.connected) {
+      setFeedback('The room connection was interrupted. Wait for it to reconnect before accepting.')
+      return
+    }
     if (!active || active.direction !== 'incoming' || !navigator.mediaDevices?.getUserMedia) {
       setFeedback('This browser cannot access a microphone or camera for calls.')
       return
@@ -372,6 +398,13 @@ export default function useRoomCalls(socket, roomId, session) {
       }
       const nextTrack = stream.getVideoTracks()[0]
       if (!nextTrack) throw new Error('No camera track was available.')
+      const latest = callRef.current
+      if (!latest || latest.callId !== active.callId || latest.localStream !== active.localStream) {
+        nextTrack.stop()
+        return
+      }
+      // A flip must not silently unmute a camera the user had switched off.
+      nextTrack.enabled = !cameraOff
       const oldTrack = active.localStream.getVideoTracks()[0]
       const sender = peerConnectionRef.current?.getSenders().find((item) => item.track?.kind === 'video')
       if (sender) await sender.replaceTrack(nextTrack)

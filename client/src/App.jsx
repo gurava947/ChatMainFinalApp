@@ -2277,7 +2277,8 @@ function CallWindow({ calls, chat }) {
 
   const statusLine = calls.call.status === 'incoming' ? `Incoming ${calls.call.mode} call`
     : calls.call.status === 'calling' ? 'Calling…'
-      : calls.call.status === 'active' ? `Connected · ${callDuration(activeAtRef.current)}`
+      : calls.call.status === 'reconnecting' ? 'Reconnecting signaling…'
+        : calls.call.status === 'active' ? `Connected · ${callDuration(activeAtRef.current)}`
         : calls.call.status === 'failed' ? 'Connection failed' : 'Connecting…'
 
   const gestureProps = (kind) => ({
