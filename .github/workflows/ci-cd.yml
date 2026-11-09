@@ -52,6 +52,42 @@ jobs:
           path: coverage/
           retention-days: 7
 
+  e2e:
+    name: Browser E2E (pair, messages, call)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install server dependencies
+        run: npm ci
+
+      - name: Install client dependencies
+        run: npm --prefix client ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # The spec builds client/dist first, then boots the server on 3101 with
+      # an in-memory store and fake media devices.
+      - name: Run browser specs
+        run: npm run test:e2e
+        env:
+          CI: true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
   redis-contract:
     name: Redis-backed state (real server)
     runs-on: ubuntu-latest
@@ -140,7 +176,7 @@ jobs:
   image:
     name: Build + scan + push
     runs-on: ubuntu-latest
-    needs: [quality, redis-contract]
+    needs: [quality, e2e, redis-contract]
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     outputs:
       digest: ${{ steps.build.outputs.digest }}

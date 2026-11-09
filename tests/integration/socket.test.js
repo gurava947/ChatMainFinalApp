@@ -4,7 +4,7 @@ const request = require('supertest');
 const { io: connect } = require('socket.io-client');
 const { createTestServer } = require('../helpers/create-test-server');
 const { waitFor, emitWithAck, openSocket } = require('../helpers/socket-harness');
-const { createSession, rememberSession, sessionHeaders } = require('../helpers/session-auth');
+const { createSession, getSessionToken, sessionHeaders } = require('../helpers/session-auth');
 
 jest.setTimeout(30000);
 
@@ -289,9 +289,8 @@ describe('per-socket send throttle', () => {
   });
 
   test('the third message in the window is rejected', async () => {
-    const res = await request(limited.app).post('/api/sessions').send({ displayName: 'Spam' });
-    rememberSession(res.body);
-    const socket = openSocket(limited.url, res.body.userId, 'flood');
+    const userId = await createSession(limited.app, 'Spam');
+    const socket = openSocket(limited.url, userId, 'flood');
     await waitFor(socket, 'presence');
 
     const first = await emitWithAck(socket, 'message', { text: 'one' });
@@ -321,9 +320,8 @@ describe('a send that meets a store outage', () => {
   // retryable case it is, or the client marks the message failed for good.
   test('acks store_unavailable rather than the driver text', async () => {
     // Sessions live in the store of the server that will answer the handshake.
-    const res = await request(broken.app).post('/api/sessions').send({ displayName: 'Wrecker' });
-    rememberSession(res.body);
-    const socket = openSocket(broken.url, res.body.userId, 'outage');
+    const userId = await createSession(broken.app, 'Wrecker');
+    const socket = openSocket(broken.url, userId, 'outage');
     await waitFor(socket, 'presence', (p) => p.connections === 1);
 
     const first = Object.assign(new Error('Connection is closed.'), { name: 'ConnectionClosedError' });
@@ -341,9 +339,8 @@ describe('a send that meets a store outage', () => {
   });
 
   test('acks a rejected payload unchanged', async () => {
-    const res = await request(broken.app).post('/api/sessions').send({ displayName: 'Honest' });
-    rememberSession(res.body);
-    const socket = openSocket(broken.url, res.body.userId, 'valid');
+    const userId = await createSession(broken.app, 'Honest');
+    const socket = openSocket(broken.url, userId, 'valid');
     await waitFor(socket, 'presence', (p) => p.connections === 1);
 
     const ack = await emitWithAck(socket, 'message', { text: '   ' });
@@ -373,16 +370,15 @@ describe('events that arrive during the handshake join', () => {
   // nothing at all: the join was still awaiting the store when the packet
   // landed, and no listener existed for it yet.
   test('a message sent before the join finishes still gets its ack', async () => {
-    const res = await request(slow.app).post('/api/sessions').send({ displayName: 'Rusher' });
-    rememberSession(res.body);
+    const userId = await createSession(slow.app, 'Rusher');
     // The room already has a member, so this join has to clear the roster with
     // a pairing code before it reaches the presence write the test slows down.
     const ownerId = await createSession(slow.app, 'First');
     const { inviteCode } = await slow.seatForTest(ownerId, 'rushed');
     const socket = connect(slow.url, {
       auth: {
-        userId: res.body.userId,
-        sessionToken: res.body.sessionToken,
+        userId,
+        sessionToken: getSessionToken(userId),
         room: 'rushed',
         roomCredential: inviteCode
       },

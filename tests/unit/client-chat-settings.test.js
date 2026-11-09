@@ -40,7 +40,7 @@ describe('fetching this viewer settings', () => {
     expect(settings).toEqual({ blocked: [other], clearedAt: 1700, theme: 'forest', hidden: ['x1'] });
     expect(calls.map((call) => call.url)).toEqual(['/api/rooms/weekend-plans/settings', '/api/me/blocks']);
     expect(calls.every((call) => call.options.headers['X-Session-Id'] === session.userId)).toBe(true);
-    expect(calls.every((call) => call.options.headers['X-Session-Token'] === session.sessionToken)).toBe(true);
+    expect(calls.every((call) => call.options.headers['X-Session-Token'] === undefined)).toBe(true);
   });
 
   test('a first-time room reads as an empty view instead of an error', async () => {

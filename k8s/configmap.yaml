@@ -16,6 +16,8 @@ data:
   RATE_LIMIT_SOCKET_CONNECT_MAX: "30"
   # Shared by every replica once the limiter runs on Redis.
   RATE_LIMIT_SESSION_MAX: "30"
+  # Pairing-code guesses per room and client address.
+  RATE_LIMIT_ACCESS_MAX: "30"
   # Presence + heartbeat
   SOCKET_HEARTBEAT_MS: "15000"
   PRESENCE_TTL_MS: "45000"

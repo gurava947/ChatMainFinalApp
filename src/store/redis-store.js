@@ -270,6 +270,10 @@ class RedisStore {
     return session;
   }
 
+  async deleteSession(userId) {
+    await this.client.del(`chat:session:${userId}`);
+  }
+
   async getSession(userId) {
     const raw = await this.client.get(`chat:session:${userId}`);
     if (!raw) return null;

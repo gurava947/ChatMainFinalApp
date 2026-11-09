@@ -10,11 +10,13 @@ const compression = require('compression');
 const pinoHttp = require('pino-http');
 
 const { securityHeaders } = require('./middleware/security');
+const { staticCacheControl } = require('./middleware/static-cache');
 const { createLimiter } = require('./middleware/rate-limit');
 const { notFound, errorHandler } = require('./middleware/error-handler');
 const healthRouter = require('./routes/health');
 const apiRouter = require('./routes/api');
 const { mediaDownloadRouter } = require('./routes/media');
+const metrics = require('./config/metrics');
 
 // Named legacy-ui, not public: a root `public/` is served by Vercel's static
 // layer ahead of the vercel.json rewrite, which would answer `/` with this old
@@ -28,21 +30,10 @@ function buildCorsOptions({ origins }) {
   return {
     origin: allowAll ? true : origins,
     credentials: !allowAll,
-    methods: ['GET', 'POST'],
-    allowedHeaders: ['Content-Type', 'X-Session-Id', 'X-Session-Token'],
+    methods: ['GET', 'POST', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'X-Session-Id', 'X-Session-Token', 'X-Session-Transport'],
     exposedHeaders: ['RateLimit', 'RateLimit-Policy'],
     maxAge: 600
-  };
-}
-
-function staticCacheControl({ isProduction }) {
-  // serve-static calls this as (res, path, stat).
-  return (res, path) => {
-    const isHtml = path.endsWith('.html');
-    // HTML must always be revalidated so clients pick up new asset references.
-    res.setHeader('Cache-Control', isHtml ? 'no-cache' : 'public, max-age=60, must-revalidate');
-    res.setHeader('Vary', 'Accept-Encoding');
-    if (isProduction) res.setHeader('X-Content-Type-Options', 'nosniff');
   };
 }
 
@@ -70,6 +61,14 @@ function createApp({ chat, store, redis, media, logger, env, ensureStore, io }) 
   }));
 
   app.use(securityHeaders({ isProduction }));
+  // Route templates, not concrete paths: a room id must not become a label.
+  app.use((req, res, next) => {
+    res.on('finish', () => {
+      const route = req.route ? `${req.baseUrl || ''}${req.route.path}` : 'unmatched';
+      metrics.httpRequests.inc({ method: req.method, route, status: String(res.statusCode) });
+    });
+    next();
+  });
   app.use(cors(buildCorsOptions({ origins: env.corsOrigins })));
   app.use(compression());
   // A long-form message is JSON on the wire, so the body ceiling follows the
@@ -78,6 +77,20 @@ function createApp({ chat, store, redis, media, logger, env, ensureStore, io }) 
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
 
   app.use(healthRouter({ store, logger, env }));
+
+  /**
+   * Prometheus scrape endpoint. Production without a token answers 404 rather
+   * than publishing traffic shape; k8s supplies the token from a Secret.
+   */
+  app.get('/metrics', async (req, res) => {
+    if (isProduction && !env.METRICS_TOKEN) return res.status(404).end();
+    if (env.METRICS_TOKEN && req.get('authorization') !== `Bearer ${env.METRICS_TOKEN}`) {
+      return res.status(401).end();
+    }
+    res.set('Content-Type', metrics.contentType);
+    res.set('Cache-Control', 'no-store');
+    return res.end(await metrics.register.metrics());
+  });
 
   // A function host can take the first request before the Redis pool is open.
   // Health endpoints answer regardless, so a cold start is never reported as
@@ -149,7 +162,7 @@ function createApp({ chat, store, redis, media, logger, env, ensureStore, io }) 
   app.use(express.static(PUBLIC_DIR, staticOptions));
 
   if (hasBuiltClient) {
-    app.get(['/', '/updates', '/shorts', '/calls'], (_req, res) => res.sendFile(path.join(CLIENT_DIST_DIR, 'index.html')));
+    app.get(['/', '/updates', '/shorts', '/calls', '/settings'], (_req, res) => res.sendFile(path.join(CLIENT_DIST_DIR, 'index.html')));
   } else {
     app.get('/', (_req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
   }

@@ -23,6 +23,7 @@ const {
 } = require('../constants');
 const { sanitizeText, sanitizeContent, messageKind } = require('../utils/validate');
 const { safeDisplayName } = require('../utils/media');
+const metrics = require('../config/metrics');
 
 /** How long a live fan-out may reuse a viewer's block list. */
 const BLOCK_CACHE_TTL_MS = 2000;
@@ -88,6 +89,15 @@ class ChatService {
     return this.store.getSession(userId);
   }
 
+  /**
+   * Clearing the cookie is the browser half of signing out; this is the half
+   * that matters if the token ever left the cookie jar. The row is gone, so a
+   * header credential or a socket that revalidates later gets nothing back.
+   */
+  async endSession(userId) {
+    await this.store.deleteSession(userId);
+  }
+
   async authenticateSession(userId, sessionToken) {
     const session = await this.getSession(userId);
     if (!session || session.expiresAt <= Date.now() || !/^[a-f\d]{64}$/i.test(session.sessionTokenHash || '')) return null;
@@ -105,8 +115,10 @@ class ChatService {
    */
   async revalidateSocket(socket) {
     const userId = socket.data.user && socket.data.user.userId;
+    const sessionToken = socket.data.sessionToken
+      || (socket.handshake.auth && socket.handshake.auth.sessionToken);
     if (!userId) return false;
-    return Boolean(await this.authenticateSession(userId, socket.handshake.auth && socket.handshake.auth.sessionToken));
+    return Boolean(await this.authenticateSession(userId, sessionToken));
   }
 
   /**
@@ -376,6 +388,7 @@ class ChatService {
       // clock two replicas may not agree on.
       message = await this.store.pushMessage(payload.room, message);
       if (clientId) await this.store.recordSend(user.userId, clientId, message.id, windowMs);
+      metrics.messagesSent.inc();
     } catch (err) {
       // A send that stored nothing has to give its claim back, or every retry
       // of this clientId is absorbed as a duplicate of a message that does not

@@ -47,6 +47,12 @@ const schema = z.object({
    * to recompile.
    */
   RATE_LIMIT_SESSION_MAX: z.coerce.number().int().min(1).default(30),
+  /**
+   * Pairing-code attempts per room per IP. A code is short enough to type but
+   * long enough that guessing needs volume; this caps that volume without
+   * touching ordinary claims and re-entries.
+   */
+  RATE_LIMIT_ACCESS_MAX: z.coerce.number().int().min(1).default(30),
   RATE_LIMIT_SEND_MAX: z.coerce.number().int().min(1).default(20),
   RATE_LIMIT_SOCKET_CONNECT_MAX: z.coerce.number().int().min(1).default(30),
   SOCKET_HEARTBEAT_MS: z.coerce.number().int().min(1000).default(15000),
@@ -66,7 +72,9 @@ const schema = z.object({
   MEDIA_MAX_PER_MESSAGE: z.coerce.number().int().min(1).max(10).default(5),
   MEDIA_TTL_S: z.coerce.number().int().min(300).default(7 * 24 * 3600),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info')
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  /** When set, /metrics requires `Authorization: Bearer <token>` in production. */
+  METRICS_TOKEN: z.preprocess((value) => value === '' ? undefined : value, z.string().min(16).optional())
 });
 
 const parsed = schema.safeParse(process.env);

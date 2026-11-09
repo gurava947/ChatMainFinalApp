@@ -105,12 +105,12 @@ export default function useRoomCalls(socket, roomId, session) {
 
     const createPeerConnection = async (active) => {
       let iceServers = ICE_SERVERS
-      if (session?.userId && session?.sessionToken) {
+      if (session?.userId) {
         const controller = new AbortController()
         const timeout = window.setTimeout(() => controller.abort(), 2500)
         try {
           const response = await fetch('/api/rtc-config', {
-            headers: { 'X-Session-Id': session.userId, 'X-Session-Token': session.sessionToken },
+            headers: { 'X-Session-Id': session.userId },
             cache: 'no-store',
             signal: controller.signal
           })
@@ -140,11 +140,15 @@ export default function useRoomCalls(socket, roomId, session) {
         remoteStreamRef.current = stream
         if (event.track.kind === 'video') setRemoteVideoReady(false)
         const video = remoteVideoRef.current
-        if (video) {
+        if (video && video.srcObject !== stream) {
           video.srcObject = stream
           const playback = video.play?.()
           if (playback && typeof playback.catch === 'function') {
-            playback.catch(() => setFeedback('Remote video arrived, but playback was blocked by the browser. Tap the video or check autoplay permissions.'))
+            // Resetting srcObject can abort a play() that is already in flight;
+            // only a real autoplay refusal deserves a message the guest must act on.
+            playback.catch((error) => {
+              if (error?.name === 'NotAllowedError') setFeedback('Remote video arrived, but playback was blocked by the browser. Tap the video or check autoplay permissions.')
+            })
           }
         }
         setRemoteStream(stream)
@@ -305,9 +309,9 @@ export default function useRoomCalls(socket, roomId, session) {
   }, [socket, roomId, session.userId])
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream
-    if (remoteAudioRef.current && remoteStream) remoteAudioRef.current.srcObject = remoteStream
-    if (localVideoRef.current && call?.localStream) localVideoRef.current.srcObject = call.localStream
+    if (remoteVideoRef.current && remoteStream && remoteVideoRef.current.srcObject !== remoteStream) remoteVideoRef.current.srcObject = remoteStream
+    if (remoteAudioRef.current && remoteStream && remoteAudioRef.current.srcObject !== remoteStream) remoteAudioRef.current.srcObject = remoteStream
+    if (localVideoRef.current && call?.localStream && localVideoRef.current.srcObject !== call.localStream) localVideoRef.current.srcObject = call.localStream
   }, [remoteStream, call])
 
   /**
@@ -320,6 +324,19 @@ export default function useRoomCalls(socket, roomId, session) {
     if (remoteVideoRef.current && currentRemoteStream) remoteVideoRef.current.srcObject = currentRemoteStream
     if (remoteAudioRef.current && remoteStream) remoteAudioRef.current.srcObject = remoteStream
     if (localVideoRef.current && callRef.current?.localStream) localVideoRef.current.srcObject = callRef.current.localStream
+  }
+
+  /** The blocked-playback notice stays until a frame actually starts. */
+  const markRemoteVideoReady = () => {
+    setRemoteVideoReady(true)
+    setFeedback((current) => (current.startsWith('Remote video arrived') ? '' : current))
+  }
+
+  const retryRemotePlayback = () => {
+    const video = remoteVideoRef.current
+    if (!video) return
+    const playback = video.play?.()
+    if (playback?.then) playback.then(() => setFeedback('')).catch(() => {})
   }
 
   useEffect(() => {
@@ -515,8 +532,9 @@ export default function useRoomCalls(socket, roomId, session) {
     call,
     remoteStream,
     remoteVideoReady,
-    markRemoteVideoReady: () => setRemoteVideoReady(true),
+    markRemoteVideoReady,
     markRemoteVideoWaiting: () => setRemoteVideoReady(false),
+    retryRemotePlayback,
     pickerMode,
     feedback,
     muted,

@@ -34,6 +34,8 @@ NODE_ENV=development USE_MEMORY_STORE=true PORT=3000 npm start
 # in one terminal and `npm run dev:client` in another.
 
 npm run lint && npm test
+# Browser E2E: builds client/dist, boots the server on 3101, uses fake media devices
+npx playwright install chromium && npm run test:e2e
 ```
 
 Full stack with Redis, two app replicas and Nginx (needs Docker):
@@ -599,22 +601,29 @@ no videos the page says so; nothing is invented.
 
 - Redis: enable auth + TLS (`rediss://`) and put it behind a managed HA offering; the sample runs
   single-node with no password.
-- Identity: guest sessions are protected by a random bearer token separate from the public UUID, but
-  they do not represent a verified login. Add real authentication (OIDC/JWT) if accounts are required.
+- Identity: guest sessions are protected by a random bearer token separate from the public UUID. The
+  browser receives it once as an HttpOnly, SameSite=Lax cookie and never in the response body, so page
+  scripts cannot read it. API tooling opts in with `X-Session-Transport: token` and may then present
+  `X-Session-Id` + `X-Session-Token`. This is not a verified login - add real authentication
+  (OIDC/JWT) if accounts are required.
 - Durability: history is cache-only. Add a database write path if messages must survive eviction.
 - Attachments: files live on the local disk (or the RWX volume) with a TTL. Object storage (S3/GCS
   with signed URLs) is the right move once volume size or egress matters, and virus scanning belongs in
   front of any file a user can download.
 - TLS: replace the build-time self-signed certificate with cert-manager/Let's Encrypt.
-- Observability: add a `/metrics` endpoint and Prometheus scrape if you want HPA on socket count
-  rather than CPU.
+- Observability: `/metrics` publishes Prometheus counters (HTTP by route template, messages sent,
+  socket connections, uploads) and a live socket gauge, enough to drive an HPA on connection count.
+  Production requires `METRICS_TOKEN` before the endpoint answers; scrape with
+  `Authorization: Bearer <token>`. See `docs/operations.md` for the scrape config and the pairing-code
+  rate limit.
 
-**Deliberately not here.** Kafka, WebRTC calling and end-to-end encryption are not implemented, because
-this deployment is one chat room for two people: a log-structured broker, a TURN service and a key
-distribution scheme would be infrastructure the actual requirement does not pay for. Redis already
-carries the fan-out that a queue would, and the send path is idempotent, so a future Kafka bridge can be
-added as a consumer of `new_message` without touching clients. If calls or E2EE do become requirements,
-build them on established protocols (DTLS-SRTP, libsignal/MLS) - not on a hand-rolled cipher.
+**Deliberately not here.** Kafka and end-to-end encryption are not implemented. Redis already carries
+the fan-out that a queue would, and the send path is idempotent, so a future Kafka bridge can be added
+as a consumer of `new_message` without touching clients. Calls are browser-to-browser WebRTC: the
+server only relays SDP and ICE over the authenticated socket, and media never touches it. That works
+without extra infrastructure on the same network; a TURN service (`TURN_URLS` + `TURN_SHARED_SECRET`)
+is what makes it work across restrictive NATs. If E2EE becomes a requirement, build it on an
+established scheme (libsignal/MLS) - not on a hand-rolled cipher.
 
 ## Audited limitations (from the P0/P1 review)
 

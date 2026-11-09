@@ -18,6 +18,7 @@ const {
   sanitizeText
 } = require('../utils/validate');
 const { SOCKET_EVENTS, selfRoom } = require('../constants');
+const { SESSION_COOKIE, parseCookieHeader, parseSessionCookie, sessionCookie } = require('../utils/cookies');
 const { mediaUploadRouter } = require('./media');
 const { createProfileService } = require('../services/profile-service');
 const { createCallService } = require('../services/call-service');
@@ -27,12 +28,24 @@ const { createIceServers } = require('../utils/rtc-config');
 const sessionHeaderSchema = z.string().uuid();
 const sessionTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
+/**
+ * The browser keeps the credential in an HttpOnly cookie, so page script
+ * cannot read it. The headers stay accepted for API tooling and tests; a
+ * request that carries both uses the cookie.
+ */
+function sessionCredentials(req) {
+  const fromCookie = parseSessionCookie(parseCookieHeader(req.headers.cookie)[SESSION_COOKIE]);
+  if (fromCookie) return fromCookie;
+  return { userId: req.get('x-session-id'), sessionToken: req.get('x-session-token') };
+}
+
 function requireSession({ chat }) {
   return async function middleware(req, res, next) {
     try {
-      const sessionId = sessionHeaderSchema.parse(req.get('x-session-id'));
-      const sessionToken = sessionTokenSchema.parse(req.get('x-session-token'));
-      const session = await chat.authenticateSession(sessionId, sessionToken);
+      const { userId, sessionToken } = sessionCredentials(req);
+      const sessionId = sessionHeaderSchema.parse(userId);
+      const token = sessionTokenSchema.parse(sessionToken);
+      const session = await chat.authenticateSession(sessionId, token);
       if (!session) {
         return res.status(401).json({ error: 'invalid_session' });
       }
@@ -51,15 +64,27 @@ function apiRouter({ chat, store, limiters, media, logger, io, env }) {
   const calls = createCallService({ store, logger });
   const statuses = createStatusService({ store, media, chat, profile, io });
 
+  const writeSessionCookie = (res, session) => {
+    res.append('Set-Cookie', sessionCookie(`${session.userId}.${session.sessionToken}`, {
+      maxAgeSeconds: env.SESSION_TTL_S,
+      secure: env.NODE_ENV === 'production'
+    }));
+  };
+
   router.post('/sessions', limiters.sessions, async (req, res, next) => {
     try {
       const { displayName } = parse(joinPayloadSchema.pick({ displayName: true }), req.body);
       const session = await chat.createSession(displayName);
+      writeSessionCookie(res, session);
+      // The browser gets the token in an HttpOnly cookie and nowhere else, so a
+      // page script cannot read it. Header-based tooling asks for the token
+      // explicitly; without that opt-in the field never leaves the server.
+      const tokenForTooling = req.get('x-session-transport') === 'token';
       res.status(201).json({
         userId: session.userId,
         displayName: session.displayName,
         expiresAt: session.expiresAt,
-        sessionToken: session.sessionToken
+        ...(tokenForTooling ? { sessionToken: session.sessionToken } : {})
       });
     } catch (err) {
       next(err);
@@ -67,6 +92,22 @@ function apiRouter({ chat, store, limiters, media, logger, io, env }) {
   });
 
   const guard = requireSession({ chat });
+
+  /** HttpOnly means page script cannot expire it; sign-out has to ask the server. */
+  router.delete('/sessions/current', guard, async (req, res, next) => {
+    try {
+      // Both halves matter: the cookie is what the browser drops, the row is
+      // what makes a copied token useless afterwards.
+      await chat.endSession(req.session.userId);
+      res.append('Set-Cookie', sessionCookie('', {
+        maxAgeSeconds: 0,
+        secure: env.NODE_ENV === 'production'
+      }));
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  });
 
   router.get('/rtc-config', guard, limiters.reads, (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -113,6 +154,16 @@ function apiRouter({ chat, store, limiters, media, logger, io, env }) {
   router.post('/rooms/:room/access', guard, limiters.writes, async (req, res, next) => {
     try {
       const room = parse(roomSchema, req.params.room);
+      // Guessing a pairing code needs volume, so attempts are capped per room
+      // and address. Ordinary claims and re-entries stay well under this.
+      const window = await store.consumeWindow(
+        `access:${req.ip}:${room}`,
+        env.RATE_LIMIT_ACCESS_MAX,
+        env.RATE_LIMIT_WINDOW_MS
+      );
+      if (window.total > window.limit) {
+        return res.status(429).json({ error: 'rate_limited', retryAfterMs: env.RATE_LIMIT_WINDOW_MS });
+      }
       const { credential } = parse(roomCredentialSchema, req.body);
       const result = await chat.authorizeRoom(req.session, room, credential);
       return res.json({

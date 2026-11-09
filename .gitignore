@@ -10,4 +10,6 @@ k8s/local/
 uploads/
 .vercel
 .playwright-mcp/
+playwright-report/
+test-results/
 *.tsbuildinfo

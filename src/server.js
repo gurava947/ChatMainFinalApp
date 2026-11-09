@@ -42,17 +42,14 @@ function createRuntime(options = {}) {
       credentials: !env.corsOrigins.includes('*'),
       methods: ['GET', 'POST']
     },
-    // WebSocket-first: polling fallback costs an extra handshake per client.
-    transports: ['websocket'],
     pingInterval: 25000,
     pingTimeout: 20000,
     // Long-form messages are text on the wire, so the packet budget has to
     // cover the full MESSAGE_MAX_CHARS ceiling in multi-byte UTF-8.
-    maxHttpBufferSize: 1e6,
-    connectionStateRecovery: {
-      recoveryTimeout: 60000,
-      maxDisconnectionDuration: 120000
-    }
+    maxHttpBufferSize: 1e6
+    // Connection-state recovery is not configured here: it needs an adapter
+    // that persists missed packets, and the pub/sub Redis adapter does not.
+    // The client already resyncs from history and its outbox after a drop.
   });
 
   const config = {

@@ -6,6 +6,8 @@ const { socketConnectGuard } = require('../middleware/rate-limit');
 const { isStoreDown } = require('../middleware/error-handler');
 const { registerCallEvents } = require('./calls');
 const { createCallService } = require('../services/call-service');
+const { SESSION_COOKIE, parseCookieHeader, parseSessionCookie } = require('../utils/cookies');
+const metrics = require('../config/metrics');
 
 /**
  * Acks carry a code the client can act on, not driver text. A store outage in
@@ -34,8 +36,17 @@ function registerAuthMiddleware(io, { chat, store, logger, env, ensureStore }) {
 
   io.use(async (socket, next) => {
     const auth = socket.handshake.auth || {};
+    // The browser's handshake carries the HttpOnly cookie; socket clients and
+    // tests can still authenticate with the auth payload.
+    const fromCookie = parseSessionCookie(
+      parseCookieHeader(socket.handshake.headers && socket.handshake.headers.cookie)[SESSION_COOKIE]
+    );
+    const userId = typeof auth.userId === 'string' ? auth.userId : fromCookie && fromCookie.userId;
+    const sessionToken = typeof auth.sessionToken === 'string'
+      ? auth.sessionToken
+      : fromCookie && fromCookie.sessionToken;
     try {
-      if (typeof auth.userId !== 'string') throw new Error('missing userId');
+      if (typeof userId !== 'string') throw new Error('missing userId');
       if (ensureStore) {
         // A paused isolate can reach this handler with its Redis socket still
         // down; the lookup would then answer "unknown session" and the client
@@ -47,9 +58,12 @@ function registerAuthMiddleware(io, { chat, store, logger, env, ensureStore }) {
           })
         ]);
       }
-      const session = await chat.authenticateSession(auth.userId, auth.sessionToken);
+      const session = await chat.authenticateSession(userId, sessionToken);
       if (!session) throw new Error('unknown session');
       socket.data.user = { userId: session.userId, displayName: session.displayName, since: Date.now() };
+      // Kept in process memory only: a long-lived socket revalidates against
+      // the store later, and the credential is never echoed to the client.
+      socket.data.sessionToken = sessionToken;
       socket.data.room = null;
       return next();
     } catch (err) {
@@ -68,6 +82,8 @@ function registerChatEvents(io, deps) {
   // it is still running, and a client that sends as soon as it connects never
   // gets an answer.
   io.on(SOCKET_EVENTS.CONNECTION, (socket) => {
+    metrics.socketConnections.inc();
+    metrics.activeSockets.inc();
     const emitError = (payload) => socket.emit(SOCKET_EVENTS.SYSTEM, { type: 'error', ...payload });
 
     socket.emit(SOCKET_EVENTS.SYSTEM, {
@@ -233,6 +249,7 @@ function registerChatEvents(io, deps) {
     });
 
     socket.on(SOCKET_EVENTS.DISCONNECT, async (reason) => {
+      metrics.activeSockets.dec();
       try {
         // A socket can drop while its join is still in flight; waiting keeps the
         // leave from running first and leaving a presence entry behind.

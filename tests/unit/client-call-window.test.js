@@ -195,7 +195,7 @@ describe('WebRTC media and signaling recovery', () => {
   test('remote tracks bind to the video element and attempt playback', () => {
     expect(CALL_HOOK_SOURCE).toMatch(/video\.srcObject = stream/);
     expect(CALL_HOOK_SOURCE).toMatch(/video\.play\?\.\(\)/);
-    expect(APP_SOURCE).toMatch(/<video ref=\{calls\.remoteVideoRef\} className="remote-call-video" autoPlay playsInline onPlaying=\{calls\.markRemoteVideoReady\} onWaiting=\{calls\.markRemoteVideoWaiting\} \/>/);
+    expect(APP_SOURCE).toMatch(/<video ref=\{calls\.remoteVideoRef\} className="remote-call-video" autoPlay playsInline onClick=\{calls\.retryRemotePlayback\} onPlaying=\{calls\.markRemoteVideoReady\} onWaiting=\{calls\.markRemoteVideoWaiting\} \/>/);
   });
 
   test('the waiting placeholder remains until the browser reports a playing video frame', () => {

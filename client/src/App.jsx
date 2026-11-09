@@ -1,10 +1,10 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertCircle, ArrowDownLeft, ArrowLeft, ArrowUpRight, Ban, Bell, CalendarDays, Camera, Check, CheckCheck, ChevronLeft,
   ChevronRight, CircleUserRound, Clock3, Download, Ellipsis, Eye, FileText, Image, ListChecks, MapPin, Maximize2,
-  Menu, MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, Search, Send, Settings2, Smile, Sparkles, Square, Sun, Trash2, Users, Video, VideoOff, X,
+  Menu, MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, RefreshCw, Search, Send, Settings2, Smile, Sparkles, Square, Sun, Trash2, Users, Video, VideoOff, X,
 } from 'lucide-react'
 import {
   authorizeRoom, blockGuest, CHAT_THEMES, checkRoomAccess, clearCallHistory, clearChatForMe, clearGuest, connectFeed, connectRoom, deleteChatForMe,
@@ -28,6 +28,7 @@ import {
   saveNotifyPrefs, shouldNotify,
 } from './notifications'
 import { callDurationLabel, callMoment, canCallBack, describeCall, groupCallsByDay } from './callHistory'
+import { applyPreferences } from './preferences'
 import {
   STATUS_PALETTE, STATUS_TEXT_MAX, cardSummary, canReadViewers, groupFeed, isLive, mediaKind, nextInPlay, pickColor,
   playOrder, timeLeftLabel, viewersLabel,
@@ -47,7 +48,11 @@ const navItems = [
   { to: '/', label: 'Chats', icon: MessageCircle, end: true },
   { to: '/updates', label: 'Updates', icon: Bell },
   { to: '/calls', label: 'Calls', icon: Phone },
+  { to: '/settings', label: 'Settings', icon: Settings2 },
 ]
+
+/** Settings is a separate chunk: nobody needs it before they open the tab. */
+const SettingsPage = lazy(() => import('./settings'))
 
 /**
  * Presence is polled per room, so the list caps how many rooms it asks about and
@@ -830,6 +835,7 @@ function initialsOf(name, fallback = 'G') {
 function ProfileMenu({ guest, profile, onClose, onOpenProfile, onOpenRooms, onSignOut }) {
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const menuRef = useRef(null)
+  const navigate = useNavigate()
   const initials = initialsOf(guest?.displayName)
   useMenuNavigation(menuRef, { onClose })
   return (
@@ -838,6 +844,7 @@ function ProfileMenu({ guest, profile, onClose, onOpenProfile, onOpenRooms, onSi
       <div className="menu-divider" />
       <button role="menuitem" onClick={onOpenProfile} disabled={!guest}><CircleUserRound size={17} /> My profile &amp; about</button>
       <button role="menuitem" onClick={onOpenRooms}><MessageCircle size={17} /> Rooms on this device <ChevronRight size={15} /></button>
+      <button role="menuitem" onClick={() => { onClose(); navigate('/settings') }}><Settings2 size={17} /> Settings <ChevronRight size={15} /></button>
       {guest && (confirmingSignOut ? (
         <div className="menu-confirm">
           <button role="menuitem" className="menu-danger" onClick={onSignOut}>Confirm sign out</button>
@@ -1753,7 +1760,6 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       window.clearTimeout(seenFlushTimerRef.current)
     }
     // Room and guest identity define one socket lifecycle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.id, session.userId])
 
   useEffect(() => {
@@ -2294,15 +2300,22 @@ function CallWindow({ calls, chat }) {
 
   const stage = calls.call.mode === 'video' ? (
     <div className="call-video-stage">
-      <video ref={calls.remoteVideoRef} className="remote-call-video" autoPlay playsInline onPlaying={calls.markRemoteVideoReady} onWaiting={calls.markRemoteVideoWaiting} />
-      <video ref={calls.localVideoRef} className="local-call-video" autoPlay muted playsInline />
+      <video ref={calls.remoteVideoRef} className="remote-call-video" autoPlay playsInline onClick={calls.retryRemotePlayback} onPlaying={calls.markRemoteVideoReady} onWaiting={calls.markRemoteVideoWaiting} />
+      <video ref={calls.localVideoRef} className={`local-call-video${calls.cameraFacing === 'user' ? ' is-mirrored' : ''}`} autoPlay muted playsInline />
+      {fullscreen && (
+        <div className="call-stage-overlay">
+          <span className={`call-live-dot${calls.call.status === 'active' ? ' is-live' : ''}`} aria-hidden="true" />
+          <div><strong>{calls.call.peerName}</strong><small>{statusLine}</small></div>
+        </div>
+      )}
       {!calls.remoteVideoReady && <div className="call-video-placeholder"><span>{calls.call.peerName.slice(0, 1).toUpperCase()}</span><strong>{calls.call.status === 'incoming' ? 'Video call' : calls.call.status === 'failed' ? 'Video connection failed' : 'Connecting video…'}</strong><small>{calls.call.status === 'failed' ? 'A TURN relay may be required on this network.' : 'Waiting for the first video frame…'}</small></div>}
     </div>
   ) : (
-    <div className="audio-call-stage">
-      <span className="audio-call-avatar">{calls.call.peerName.slice(0, 1).toUpperCase()}</span>
+    <div className={`audio-call-stage${calls.call.status === 'active' ? ' is-live' : ''}`}>
+      <span className="audio-call-avatar" aria-hidden="true">{calls.call.peerName.slice(0, 1).toUpperCase()}</span>
       <strong>{calls.call.peerName}</strong>
-      <small>{calls.call.status === 'active' ? 'Audio connected' : 'Audio call'}</small>
+      <small>{calls.call.status === 'active' ? 'Audio connected' : statusLine}</small>
+      {calls.call.status === 'active' && <span className="call-equalizer" aria-hidden="true"><i /><i /><i /><i /><i /></span>}
       <audio ref={calls.remoteAudioRef} autoPlay />
     </div>
   )
@@ -2442,7 +2455,7 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRead, 
     look()
     const timer = window.setInterval(look, PRESENCE_REFRESH_MS)
     return () => { active = false; window.clearInterval(timer) }
-  }, [roomIds, guest?.userId, guest?.sessionToken])
+  }, [roomIds, guest?.userId])
 
   const resizeInboxPane = (width) => {
     const bounds = gridRef.current?.getBoundingClientRect()
@@ -3115,6 +3128,12 @@ function App() {
   }, [feedNotice])
 
   useEffect(() => {
+    // theme-boot.js already painted these from localStorage; re-applying keeps a
+    // dev-time HMR reload and a cleared attribute from falling back mid-session.
+    applyPreferences()
+  }, [])
+
+  useEffect(() => {
     // The pre-paint helper owns both the attribute and the browser-chrome colour,
     // so a toggle cannot leave the status bar showing the other theme.
     if (window.__inchatSetTheme) window.__inchatSetTheme(dark)
@@ -3124,15 +3143,12 @@ function App() {
 
   useEffect(() => {
     if (!guest?.userId) return undefined
-    if (!guest.sessionToken) {
-      clearGuest()
-      setGuest(null)
-      return undefined
-    }
     let active = true
+    // The cookie is the credential now: the stored identity is validated on
+    // load, and a 401/404 means that cookie no longer backs this guest.
     fetch(`/api/sessions/${encodeURIComponent(guest.userId)}`, { headers: sessionHeaders(guest) })
       .then(async (response) => {
-        if (response.ok) return { ...(await response.json()), sessionToken: guest.sessionToken }
+        if (response.ok) return response.json()
         if (response.status === 401 || response.status === 404) return null
         return undefined
       })
@@ -3146,7 +3162,7 @@ function App() {
       })
       .catch(() => {})
     return () => { active = false }
-  }, [guest?.userId, guest?.sessionToken])
+  }, [guest?.userId])
 
   /**
    * The profile - name, about note, picture - belongs to the session, so it is
@@ -3230,7 +3246,7 @@ function App() {
       socket.close()
     }
     // A new identity is the only thing that should rebuild this channel.
-  }, [guest?.userId, guest?.sessionToken])
+  }, [guest?.userId])
 
   /** Nothing left to preview: the row goes back to the empty-room wording. */
   const forgetRoomPreview = (roomId) => setRooms((current) => {
@@ -3239,8 +3255,16 @@ function App() {
     return next
   })
 
-  const shellClass = location.pathname === '/calls' ? 'app-shell calls-route' : location.pathname === '/' ? 'app-shell home-route' : location.pathname === '/updates' ? 'app-shell updates-route' : 'app-shell'
+  const shellClass = location.pathname === '/calls' ? 'app-shell calls-route'
+    : location.pathname === '/' ? 'app-shell home-route'
+      : location.pathname === '/updates' ? 'app-shell updates-route'
+        : location.pathname === '/settings' ? 'app-shell settings-route'
+          : 'app-shell'
   const signOut = () => {
+    // The cookie is HttpOnly, so only the server can expire it.
+    if (guest?.userId) {
+      fetch('/api/sessions/current', { method: 'DELETE', headers: sessionHeaders(guest) }).catch(() => {})
+    }
     clearGuest()
     setGuest(null)
   }
@@ -3288,6 +3312,22 @@ function App() {
       <Route path="/updates" element={<UpdatesPage guest={guest} />} />
       <Route path="/shorts" element={<ShortsPage guest={guest} rooms={rooms} onOpenRoom={openRoomFromFeed} />} />
       <Route path="/calls" element={<CallsPage guest={guest} notice={feedNotice} onOpenRoom={(roomId) => openRoomFromFeed(roomId)} onCallBack={(call) => openRoomFromFeed(call.room, { userId: call.peer.userId, displayName: call.peer.displayName, mode: call.mode })} />} />
+      <Route path="/settings" element={
+        <Suspense fallback={<main className="content-page settings-page"><div className="settings-loading" role="status"><span /><p>Loading your settings…</p></div></main>}>
+          <SettingsPage
+            guest={guest}
+            profile={profile}
+            dark={dark}
+            onToggleTheme={() => setDark((value) => !value)}
+            onProfileChange={setProfile}
+            rooms={rooms}
+            onForgetRoom={forgetRoomOnDevice}
+            onOpenRoom={(roomId) => openRoomFromFeed(roomId)}
+            onSignOut={signOut}
+            onFeedNotice={setFeedNotice}
+          />
+        </Suspense>
+      } />
     </Routes>
   )
 

@@ -24,7 +24,10 @@ function getSessionToken(userId) {
 }
 
 async function createSession(app, displayName) {
-  const response = await request(app).post('/api/sessions').send({ displayName });
+  const response = await request(app)
+    .post('/api/sessions')
+    .set('X-Session-Transport', 'token')
+    .send({ displayName });
   if (response.status !== 201) {
     throw new Error(`session creation failed: ${response.status} ${JSON.stringify(response.body)}`);
   }

@@ -1,8 +1,8 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import 'bootstrap/dist/css/bootstrap.min.css'
 import './styles.css'
+import './appearance.css'
 import App from './App'
 
 if ('serviceWorker' in navigator && window.isSecureContext) {

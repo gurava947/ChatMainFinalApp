@@ -575,6 +575,12 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 .rooms-sheet-list small{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rooms-sheet-actions{display:flex;gap:6px;flex:0 0 auto}
 .rooms-sheet-note{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
+/*
+ * Base button geometry. The app used to lean on Bootstrap for this and dropped
+ * the whole framework stylesheet to get it, so the shared shape lives here and
+ * the sheet-specific rules below only supply colour and spacing overrides.
+ */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 13px;border:1px solid transparent;border-radius:10px;background:var(--surface-2);color:var(--ink);font:inherit;font-size:12px;font-weight:700;line-height:1.2;cursor:pointer;transition:background .18s ease,color .18s ease,border-color .18s ease}
 .rooms-sheet .btn,.profile-sheet .btn,.profile-note-actions .btn{padding:8px 13px;border-radius:10px;font-size:11px;font-weight:700;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);transition:background .18s ease,color .18s ease}
 .rooms-sheet .btn:hover,.profile-sheet .btn:hover{background:color-mix(in srgb,var(--teal) 12%,var(--surface));color:var(--teal)}
 .btn-primary{background:var(--teal);color:#fff;border-color:var(--teal)}

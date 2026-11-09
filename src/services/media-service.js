@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const multer = require('multer');
 
 const { classifyKind } = require('../utils/media');
+const metrics = require('../config/metrics');
 
 const SNIFF_BYTES = 16;
 
@@ -124,6 +125,7 @@ function createMediaService({ store, logger, config }) {
           return record;
         }));
         request.mediaRecords = records;
+        metrics.mediaUploads.inc(records.length);
         return next();
       } catch (cause) {
         await Promise.all(request.files.map((file) => unlinkQuietly(path.basename(file.path))));

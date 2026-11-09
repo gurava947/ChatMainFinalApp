@@ -1,5 +1,6 @@
 const js = require('@eslint/js');
 const globals = require('globals');
+const react = require('eslint-plugin-react');
 
 module.exports = [
   {
@@ -36,5 +37,20 @@ module.exports = [
       globals: { ...globals.browser }
     },
     rules: { 'no-console': 'off' }
+  },
+  {
+    // JSX compiles to identifier lookups, so a missing icon import is a blank
+    // screen at runtime rather than a build error. Core no-undef ignores JSX
+    // names, so the React plugin's jsx-no-undef is the rule that catches it;
+    // the rest of the server's rules would need a large client cleanup first.
+    files: ['client/src/**/*.{js,jsx}'],
+    plugins: { react },
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      parserOptions: { ecmaFeatures: { jsx: true } },
+      globals: { ...globals.browser }
+    },
+    rules: { 'react/jsx-no-undef': 'error' }
   }
 ];

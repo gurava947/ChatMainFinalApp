@@ -300,6 +300,10 @@ class MemoryStore {
     return this.sessions.read(userId) ?? null;
   }
 
+  async deleteSession(userId) {
+    this.sessions.delete(userId);
+  }
+
   async getRoomPassword(room) {
     // Read-with-touch, exactly like the Redis path: a room in use keeps its
     // secret, an abandoned one eventually forgets it.

@@ -33,14 +33,18 @@ beforeEach(() => {
 });
 
 describe('guest session storage', () => {
-  test('saveGuest writes both the new key and the legacy keys', () => {
+  test('saveGuest persists the identity but never the credential', () => {
     roomChat.saveGuest(session);
-    expect(JSON.parse(localStorage.getItem('inchat:guest'))).toEqual(session);
+    expect(JSON.parse(localStorage.getItem('inchat:guest'))).toEqual({
+      userId: session.userId,
+      displayName: session.displayName,
+      expiresAt: session.expiresAt
+    });
     expect(localStorage.getItem('chat:userId')).toBe(session.userId);
     expect(localStorage.getItem('chat:displayName')).toBe(session.displayName);
   });
 
-  test('validates a cached session with its secret and keeps it for reconnects', async () => {
+  test('validates a cached session through the cookie alone', async () => {
     roomChat.saveGuest(session);
     window.__fetchResponse = () => Promise.resolve(jsonResponse({
       userId: session.userId,
@@ -51,9 +55,18 @@ describe('guest session storage', () => {
     const restored = await roomChat.resolveGuest(session.displayName);
 
     expect(fetchCalls[0].url).toBe(`/api/sessions/${session.userId}`);
-    expect(fetchCalls[0].options.headers['X-Session-Token']).toBe(session.sessionToken);
-    expect(restored.sessionToken).toBe(session.sessionToken);
-    expect(roomChat.readGuest().sessionToken).toBe(session.sessionToken);
+    expect(fetchCalls[0].options.headers).toEqual({ 'X-Session-Id': session.userId });
+    expect(restored.sessionToken).toBeUndefined();
+    expect(roomChat.readGuest().sessionToken).toBeUndefined();
+  });
+
+  test('a legacy token saved by an older build is dropped on read', () => {
+    localStorage.setItem('inchat:guest', JSON.stringify(session));
+    expect(roomChat.readGuest()).toEqual({
+      userId: session.userId,
+      displayName: session.displayName,
+      expiresAt: session.expiresAt
+    });
   });
 
   test('a minted session is only handed back, never stored, so a refused join cannot change who this device is', async () => {
@@ -65,7 +78,11 @@ describe('guest session storage', () => {
 
     expect(fresh).toEqual(minted);
     // resolveGuest alone is not a commitment; joinRoom stores it once the room says yes.
-    expect(roomChat.readGuest()).toEqual(session);
+    expect(roomChat.readGuest()).toEqual({
+      userId: session.userId,
+      displayName: session.displayName,
+      expiresAt: session.expiresAt
+    });
     expect(localStorage.getItem('chat:displayName')).toBe(session.displayName);
   });
 
@@ -151,7 +168,7 @@ describe('profile read + picture', () => {
     expect(sent.name).toBe('me.png');
     expect(sent.type).toBe('image/png');
     // Letting the browser set the multipart boundary is what keeps multer happy.
-    expect(Object.keys(options.headers)).toEqual(['X-Session-Id', 'X-Session-Token']);
+    expect(Object.keys(options.headers)).toEqual(['X-Session-Id']);
     expect(avatar.url).toBe('/media/m1');
   });
 
@@ -228,9 +245,11 @@ describe('profile menu wiring', () => {
     expect(source).toMatch(/<AppHeader[^\n]*onProfileChange=\{setProfile\}/);
   });
 
-  test('sign out and remove both act on device storage, not on the server room', () => {
+  test('sign out clears device storage and expires the cookie server-side', () => {
     const source = app();
-    expect(source).toMatch(/const signOut = \(\) => \{\s*clearGuest\(\)/);
+    expect(source).toMatch(/const signOut = \(\) => \{/);
+    expect(source).toMatch(/method: 'DELETE', headers: sessionHeaders\(guest\)/);
+    expect(source).toMatch(/clearGuest\(\)\s*setGuest\(null\)/);
     expect(source).toMatch(/const forgetRoomOnDevice = \(roomId\) => setRooms\(forgetRoom\(roomId\)\)/);
   });
 

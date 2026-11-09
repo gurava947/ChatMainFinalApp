@@ -71,8 +71,13 @@ const EMOJI_EXPORTS = [
   'EMOJI_GROUPS', 'insertAtCaret',
 ];
 
-/**
- * The IndexedDB layer. Its surface is long on purpose - every read and write the
+/** Appearance choices applied to <html> before the first paint. */
+const PREFERENCE_EXPORTS = [
+  'ACCENTS', 'readAccent', 'saveAccent', 'applyAccent',
+  'readMotion', 'saveMotion', 'applyMotion', 'applyPreferences',
+];
+
+/** The IndexedDB layer. Its surface is long on purpose - every read and write the
  * app performs goes through one of these names, so a test can assert on the same
  * functions the browser runs instead of on a component tree.
  */
@@ -175,10 +180,14 @@ function loadLocalStore() {
   return loadClientModule('localStore.js', LOCAL_STORE_EXPORTS);
 }
 
+function loadPreferences() {
+  return loadClientModule('preferences.js', PREFERENCE_EXPORTS);
+}
+
 module.exports = {
   loadRoomChat, loadRichCards, loadA11y, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji,
+  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, A11Y_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
   NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
-  LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS,
+  LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS, PREFERENCE_EXPORTS,
 };

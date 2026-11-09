@@ -9,7 +9,12 @@ const LEGACY_ROOM_KEY = 'chat:room'
 export function readGuest() {
   try {
     const saved = JSON.parse(localStorage.getItem(GUEST_KEY) || 'null')
-    if (saved?.userId && saved?.displayName) return saved
+    // Older builds kept the session token here; the cookie owns it now, so a
+    // legacy copy is dropped on read instead of being sent anywhere.
+    if (saved?.userId && saved?.displayName) {
+      const { sessionToken: _legacyToken, ...safe } = saved
+      return safe
+    }
   } catch {
     localStorage.removeItem(GUEST_KEY)
   }
@@ -30,16 +35,19 @@ export function readRooms() {
 }
 
 export function saveGuest(session) {
-  localStorage.setItem(GUEST_KEY, JSON.stringify(session))
+  // Only the identity is persisted; the credential lives in an HttpOnly
+  // cookie the page cannot read.
+  localStorage.setItem(GUEST_KEY, JSON.stringify({
+    userId: session.userId,
+    displayName: session.displayName,
+    expiresAt: session.expiresAt
+  }))
   localStorage.setItem(LEGACY_USER_KEY, session.userId)
   localStorage.setItem(LEGACY_NAME_KEY, session.displayName)
 }
 
 export function sessionHeaders(session) {
-  return {
-    'X-Session-Id': session.userId,
-    'X-Session-Token': session.sessionToken
-  }
+  return { 'X-Session-Id': session.userId }
 }
 
 export function saveRooms(rooms) {
@@ -118,13 +126,13 @@ export async function resolveGuest(displayName) {
   const name = displayName.trim()
   if (name.length < 2 || name.length > 32) throw new Error('Display name must be 2–32 characters.')
   const cached = readGuest()
-  if (cached?.displayName === name && cached.sessionToken) {
+  if (cached?.displayName === name) {
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(cached.userId)}`, {
         headers: sessionHeaders(cached)
       })
       if (response.ok) {
-        const session = { ...(await response.json()), sessionToken: cached.sessionToken }
+        const session = await response.json()
         saveGuest(session)
         return session
       }
@@ -147,9 +155,11 @@ export async function resolveGuest(displayName) {
 }
 
 export function connectRoom(session, room) {
+  // The credential rides the HttpOnly cookie on the handshake, so only the
+  // identity and the room travel in the auth payload. Transports stay at the
+  // engine default: polling is the fallback a restrictive proxy needs.
   return io({
-    auth: { userId: session.userId, sessionToken: session.sessionToken, room },
-    transports: ['websocket'],
+    auth: { userId: session.userId, room },
     reconnectionDelay: 500,
     reconnectionDelayMax: 5000
   })

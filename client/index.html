@@ -7,28 +7,7 @@
     <link rel="icon" href="/inchat-logo.png" />
     <meta name="description" content="InChat — a modern, Indian-inspired messaging dashboard." />
     <title>InChat — Conversations, your way</title>
-    <script>
-      // Runs before the stylesheet paints. Without it the first frame is always
-      // the default theme and the app visibly flashes when React settles the
-      // stored choice a tick later. The browser chrome colour is written from the
-      // same decision, because a media-query theme-colour would follow the OS
-      // while the page follows the user's own toggle.
-      (function () {
-        var dark;
-        try {
-          var stored = localStorage.getItem('inchat-theme');
-          dark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-        } catch (err) {
-          dark = true;
-        }
-        window.__inchatSetTheme = function (isDark) {
-          document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
-          var meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.setAttribute('content', isDark ? '#0b0d0c' : '#f4f7f5');
-        };
-        window.__inchatSetTheme(dark);
-      })();
-    </script>
+    <script src="/theme-boot.js"></script>
   </head>
   <body>
     <div id="root"></div>
