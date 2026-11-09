@@ -175,13 +175,18 @@ describe('the call window component', () => {
   });
 
   test('a minimised call still hears the other guest', () => {
-    const minimized = APP_SOURCE.slice(APP_SOURCE.indexOf("if (mode === 'minimized')"), APP_SOURCE.indexOf('const windowNode'));
+    const minimized = APP_SOURCE.slice(APP_SOURCE.indexOf('const minimizedNode = ('), APP_SOURCE.indexOf('const windowNode'));
     expect(minimized).toMatch(/<audio ref=\{calls\.remoteAudioRef\} autoPlay \/>/);
     expect(minimized).toMatch(/callDuration\(activeAtRef\.current\)/);
   });
 
   test('the chat behind a floating call stays interactive', () => {
-    expect(APP_SOURCE).toMatch(/mode === 'docked' && !fullscreen\s*\?\s*<div className="call-overlay"/);
+    // Docking is a class on the stable host rather than a conditional overlay
+    // wrapper, which is what used to remount the window (and its video) on
+    // every dock/float switch.
+    expect(APP_SOURCE).toMatch(/const docked = mode === 'docked' && !fullscreen/);
+    expect(APP_SOURCE).toMatch(/call-window-host\$\{docked \? ' is-docked' : ''\}/);
+    expect(APP_SOURCE).not.toMatch(/mode === 'docked' && !fullscreen\s*\?\s*<div className="call-overlay"/);
   });
 
   test('the timer starts when the call actually connects, not when it is dialled', () => {
@@ -195,13 +200,19 @@ describe('WebRTC media and signaling recovery', () => {
   test('remote tracks bind to the video element and attempt playback', () => {
     expect(CALL_HOOK_SOURCE).toMatch(/video\.srcObject = stream/);
     expect(CALL_HOOK_SOURCE).toMatch(/video\.play\?\.\(\)/);
-    expect(APP_SOURCE).toMatch(/<video ref=\{calls\.remoteVideoRef\} className="remote-call-video" autoPlay playsInline onClick=\{calls\.retryRemotePlayback\} onPlaying=\{calls\.markRemoteVideoReady\} onWaiting=\{calls\.markRemoteVideoWaiting\} \/>/);
+    expect(APP_SOURCE).toMatch(/<video ref=\{calls\.remoteVideoRef\} className="remote-call-video" autoPlay playsInline onClick=\{calls\.retryRemotePlayback\} onPlaying=\{calls\.markRemoteVideoReady\} \/>/);
   });
 
   test('the waiting placeholder remains until the browser reports a playing video frame', () => {
     expect(CALL_HOOK_SOURCE).toMatch(/setRemoteVideoReady\(false\)/);
-    expect(APP_SOURCE).toMatch(/!calls\.remoteVideoReady && <div className="call-video-placeholder"/);
+    // The placeholder is mounted for the life of the call and faded with
+    // data-visible; unmounting it (or resetting readiness on every ontrack /
+    // onWaiting event) is what made the stage blink.
+    expect(APP_SOURCE).toMatch(/className="call-video-placeholder" data-visible=\{!calls\.remoteVideoReady\}/);
     expect(APP_SOURCE).toMatch(/onPlaying=\{calls\.markRemoteVideoReady\}/);
+    expect(APP_SOURCE).not.toMatch(/onWaiting=\{calls\.markRemoteVideoWaiting\}/);
+    expect(CALL_HOOK_SOURCE).not.toMatch(/markRemoteVideoWaiting/);
+    expect(CALL_HOOK_SOURCE).not.toMatch(/event\.track\.kind === 'video'\) setRemoteVideoReady\(false\)/);
   });
 
   test('a failed media path gives actionable TURN guidance instead of leaving a blank stage', () => {

@@ -138,7 +138,6 @@ export default function useRoomCalls(socket, roomId, session) {
           stream.addTrack(event.track)
         }
         remoteStreamRef.current = stream
-        if (event.track.kind === 'video') setRemoteVideoReady(false)
         const video = remoteVideoRef.current
         if (video && video.srcObject !== stream) {
           video.srcObject = stream
@@ -321,7 +320,14 @@ export default function useRoomCalls(socket, roomId, session) {
    */
   const reattachMedia = () => {
     const currentRemoteStream = remoteStreamRef.current || remoteStream
-    if (remoteVideoRef.current && currentRemoteStream) remoteVideoRef.current.srcObject = currentRemoteStream
+    const video = remoteVideoRef.current
+    if (video && currentRemoteStream) {
+      video.srcObject = currentRemoteStream
+      // A remounted <video> can stay paused even with autoPlay; asking
+      // explicitly makes expand-from-minimised instant. A refused play puts
+      // the placeholder back so the tap-to-play affordance is visible.
+      video.play?.()?.catch?.(() => setRemoteVideoReady(false))
+    }
     if (remoteAudioRef.current && remoteStream) remoteAudioRef.current.srcObject = remoteStream
     if (localVideoRef.current && callRef.current?.localStream) localVideoRef.current.srcObject = callRef.current.localStream
   }
@@ -533,7 +539,6 @@ export default function useRoomCalls(socket, roomId, session) {
     remoteStream,
     remoteVideoReady,
     markRemoteVideoReady,
-    markRemoteVideoWaiting: () => setRemoteVideoReady(false),
     retryRemotePlayback,
     pickerMode,
     feedback,

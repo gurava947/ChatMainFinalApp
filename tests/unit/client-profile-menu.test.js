@@ -235,14 +235,16 @@ describe('about note', () => {
 describe('profile menu wiring', () => {
   const app = () => fs.readFileSync(path.join(CLIENT, 'App.jsx'), 'utf8');
 
-  test('the header passes real data and handlers into the menu', () => {
+  test('the header passes real data and handlers into the profile entry', () => {
     const source = app();
     expect(source).toMatch(/<AppHeader[^\n]*guest=\{guest\}/);
-    expect(source).toMatch(/<AppHeader[^\n]*onSignOut=\{signOut\}/);
-    expect(source).toMatch(/<AppHeader[^\n]*onForgetRoom=\{forgetRoomOnDevice\}/);
-    // Without these two props the picture loads but never reaches the menu.
     expect(source).toMatch(/<AppHeader[^\n]*profile=\{profile\}/);
     expect(source).toMatch(/<AppHeader[^\n]*onProfileChange=\{setProfile\}/);
+    expect(source).toMatch(/<AppHeader[^\n]*dark=\{dark\}/);
+    expect(source).toMatch(/<AppHeader[^\n]*onThemeChange=/);
+    // Rooms and sign out moved into Settings, so the header no longer carries them.
+    expect(source).not.toMatch(/<AppHeader[^\n]*onSignOut=/);
+    expect(source).not.toMatch(/<AppHeader[^\n]*onForgetRoom=/);
   });
 
   test('sign out clears device storage and expires the cookie server-side', () => {
@@ -253,13 +255,13 @@ describe('profile menu wiring', () => {
     expect(source).toMatch(/const forgetRoomOnDevice = \(roomId\) => setRooms\(forgetRoom\(roomId\)\)/);
   });
 
-  test('no menu entry is a dead button', () => {
+  test('the header has no hidden menu and every visible action is wired', () => {
     const source = app();
-    const menu = source.slice(source.indexOf('function ProfileMenu'), source.indexOf('function AppHeader'));
-    expect(menu).not.toMatch(/coming soon/i);
-    expect(menu).toMatch(/onOpenProfile/);
-    expect(menu).toMatch(/onOpenRooms/);
-    expect(menu).toMatch(/onSignOut/);
+    const header = source.slice(source.indexOf('function AppHeader'), source.indexOf('function SearchBar'));
+    expect(header).not.toMatch(/Ellipsis/);
+    expect(header).toMatch(/<ThemeSwitch dark=\{dark\} onChange=\{onThemeChange\}/);
+    expect(header).toMatch(/onClick=\{\(\) => setProfileOpen\(true\)\}/);
+    expect(source).not.toMatch(/function ProfileMenu/);
   });
 
   test('the profile sheet is wired to the real avatar endpoints', () => {

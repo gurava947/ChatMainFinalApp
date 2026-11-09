@@ -13,6 +13,8 @@ export const ACCENTS = [
   { id: 'indigo', label: 'Indigo', light: '#4f46e5', deep: '#4338ca' },
   { id: 'rose', label: 'Rose', light: '#be123c', deep: '#9f1239' },
   { id: 'amber', label: 'Amber', light: '#b45309', deep: '#92400e' },
+  { id: 'sky', label: 'Sky', light: '#0284c7', deep: '#075985' },
+  { id: 'plum', label: 'Plum', light: '#9333ea', deep: '#6b21a8' },
 ]
 
 const ACCENT_IDS = new Set(ACCENTS.map((entry) => entry.id))

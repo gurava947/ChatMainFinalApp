@@ -4,7 +4,7 @@ import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-d
 import {
   AlertCircle, ArrowDownLeft, ArrowLeft, ArrowUpRight, Ban, Bell, CalendarDays, Camera, Check, CheckCheck, ChevronLeft,
   ChevronRight, CircleUserRound, Clock3, Download, Ellipsis, Eye, FileText, Image, ListChecks, MapPin, Maximize2,
-  Menu, MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, RefreshCw, Search, Send, Settings2, Smile, Sparkles, Square, Sun, Trash2, Users, Video, VideoOff, X,
+  MessageCircle, Mic, MicOff, Minimize2, Moon, Palette, Pause, Phone, PhoneOff, Pin, Play, Plus, RefreshCw, Search, Send, Settings2, Smile, Sparkles, Square, Sun, Trash2, Users, Video, VideoOff, X,
 } from 'lucide-react'
 import {
   authorizeRoom, blockGuest, CHAT_THEMES, checkRoomAccess, clearCallHistory, clearChatForMe, clearGuest, connectFeed, connectRoom, deleteChatForMe,
@@ -650,11 +650,21 @@ function BrandMark() {
   )
 }
 
-function ThemeToggle({ dark, onToggle }) {
+/**
+ * Both themes are visible at once, because a toggle that only names the theme
+ * you are *not* in asks the guest to translate before they can choose. The
+ * compact pill sits where the old three-dot menu was.
+ */
+function ThemeSwitch({ dark, onChange }) {
   return (
-    <button className="icon-button theme-toggle" aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} onClick={onToggle}>
-      {dark ? <Sun size={18} /> : <Moon size={18} />}
-    </button>
+    <div className="theme-switch" role="group" aria-label="Colour theme">
+      <button type="button" className={dark ? '' : 'is-active'} aria-pressed={!dark} title="Light theme" onClick={() => onChange('light')}>
+        <Sun size={15} aria-hidden="true" /><span>Light</span>
+      </button>
+      <button type="button" className={dark ? 'is-active' : ''} aria-pressed={dark} title="Dark theme" onClick={() => onChange('dark')}>
+        <Moon size={15} aria-hidden="true" /><span>Dark</span>
+      </button>
+    </div>
   )
 }
 
@@ -664,7 +674,8 @@ function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
   const [note, setNote] = useState(profile ? profile.note : null)
   const [avatar, setAvatar] = useState(profile ? profile.avatar : null)
   const [draft, setDraft] = useState(profile?.note?.text || '')
-  const [status, setStatus] = useState(profile ? '' : 'Loading your profile…')
+  const [status, setStatus] = useState('')
+  const [loadingProfile, setLoadingProfile] = useState(!profile)
   const [saving, setSaving] = useState(false)
   const [pictureBusy, setPictureBusy] = useState(false)
   const fileInputRef = useRef(null)
@@ -676,6 +687,7 @@ function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
       setAvatar(profile.avatar)
       setDraft(profile.note.text)
       setStatus('')
+      setLoadingProfile(false)
       return
     }
     let active = true
@@ -685,10 +697,14 @@ function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
         setNote(loaded.note)
         setAvatar(loaded.avatar)
         setDraft(loaded.note.text)
-        setStatus('')
+        setLoadingProfile(false)
         onProfileChange?.(loaded)
       })
-      .catch((error) => { if (active) setStatus(error.message) })
+      .catch((error) => {
+        if (!active) return
+        setLoadingProfile(false)
+        setStatus(error.message)
+      })
     return () => { active = false }
   }, [profile, guest, onProfileChange])
 
@@ -761,59 +777,22 @@ function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
           {guest.expiresAt ? <p><span>Session ends</span><strong>{new Date(guest.expiresAt).toLocaleString()}</strong></p> : null}
           {avatar?.updatedAt ? <p><span>Picture</span><strong>{new Date(avatar.updatedAt).toLocaleString()}</strong></p> : null}
         </div>
-        <form className="profile-note-form" onSubmit={submit}>
-          <label className="field"><span>About</span>
-            <textarea className="input" rows={3} maxLength={500} value={draft} placeholder="Say something about yourself" disabled={note === null} onChange={(event) => setDraft(event.target.value)} />
-          </label>
-          <div className="profile-note-actions">
-            <button className="btn btn-primary" type="submit" disabled={saving || note === null}>{saving ? 'Saving…' : 'Save about'}</button>
-            <small role="status">{status}</small>
+        {loadingProfile ? (
+          <div className="profile-skeleton" role="status" aria-label="Opening your profile">
+            <span /><span /><span />
           </div>
-          {note?.updatedAt ? <small className="text-muted">Updated {new Date(note.updatedAt).toLocaleString()}</small> : null}
-        </form>
-      </section>
-    </div>,
-    document.body,
-  )
-}
-
-function RoomsSheet({ rooms, onForgetRoom, onClose }) {
-  const sheetRef = useRef(null)
-  const [copied, setCopied] = useState('')
-  const [clipboardBlocked, setClipboardBlocked] = useState(false)
-  useDialogTrap(sheetRef, { onClose })
-
-  const copyRoom = async (room) => {
-    try {
-      await navigator.clipboard.writeText(room.id)
-      setCopied(room.id)
-      window.setTimeout(() => setCopied((current) => (current === room.id ? '' : current)), 2000)
-    } catch {
-      setClipboardBlocked(true)
-    }
-  }
-
-  return createPortal(
-    <div className="room-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section ref={sheetRef} className="room-modal rooms-sheet" role="dialog" aria-modal="true" aria-label="Rooms on this device">
-        <button className="room-modal-close" type="button" aria-label="Close rooms list" onClick={onClose}><X size={18} /></button>
-        <p className="eyebrow">THIS DEVICE</p>
-        <h2>Your rooms</h2>
-        {clipboardBlocked && <p className="room-form-error" role="alert">This browser blocked the clipboard. Share the name shown below instead.</p>}
-        {rooms.length ? (
-          <ul className="rooms-sheet-list">
-            {rooms.map((room) => (
-              <li key={room.id}>
-                <div><strong>{room.name}</strong><small>#{room.id}</small></div>
-                <div className="rooms-sheet-actions">
-                  <button type="button" className="btn" onClick={() => copyRoom(room)}>{copied === room.id ? 'Copied' : 'Copy name'}</button>
-                  <button type="button" className="btn" onClick={() => onForgetRoom(room.id)}>Remove</button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : <p className="room-modal-copy">You have not joined a room on this device yet.</p>}
-        <p className="rooms-sheet-note">Removing a room only clears it from this device list.</p>
+        ) : (
+          <form className="profile-note-form" onSubmit={submit}>
+            <label className="field"><span>About <b className="field-count">{draft.length}/500</b></span>
+              <textarea className="input" rows={3} maxLength={500} value={draft} placeholder="Say something about yourself" disabled={note === null} onChange={(event) => setDraft(event.target.value)} />
+            </label>
+            <div className="profile-note-actions">
+              <button className="btn btn-primary" type="submit" disabled={saving || note === null}>{saving ? 'Saving…' : 'Save about'}</button>
+              <small role="status">{status}</small>
+            </div>
+            {note?.updatedAt ? <small className="text-muted">Updated {new Date(note.updatedAt).toLocaleString()}</small> : null}
+          </form>
+        )}
       </section>
     </div>,
     document.body,
@@ -832,73 +811,82 @@ function initialsOf(name, fallback = 'G') {
   return name?.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || fallback
 }
 
-function ProfileMenu({ guest, profile, onClose, onOpenProfile, onOpenRooms, onSignOut }) {
-  const [confirmingSignOut, setConfirmingSignOut] = useState(false)
-  const menuRef = useRef(null)
-  const navigate = useNavigate()
-  const initials = initialsOf(guest?.displayName)
-  useMenuNavigation(menuRef, { onClose })
-  return (
-    <div ref={menuRef} className="profile-menu" role="menu">
-      <div className="profile-menu-head"><AvatarFace className="avatar avatar-sm avatar-teal" src={profile?.avatar?.url} initials={initials} /><div><strong>{guest?.displayName || 'No profile yet'}</strong><span>{guest ? 'Guest session · no account' : 'Join a room to start one'}</span></div></div>
-      <div className="menu-divider" />
-      <button role="menuitem" onClick={onOpenProfile} disabled={!guest}><CircleUserRound size={17} /> My profile &amp; about</button>
-      <button role="menuitem" onClick={onOpenRooms}><MessageCircle size={17} /> Rooms on this device <ChevronRight size={15} /></button>
-      <button role="menuitem" onClick={() => { onClose(); navigate('/settings') }}><Settings2 size={17} /> Settings <ChevronRight size={15} /></button>
-      {guest && (confirmingSignOut ? (
-        <div className="menu-confirm">
-          <button role="menuitem" className="menu-danger" onClick={onSignOut}>Confirm sign out</button>
-          <button role="menuitem" onClick={() => setConfirmingSignOut(false)}>Keep session</button>
-        </div>
-      ) : (
-        <button role="menuitem" onClick={() => setConfirmingSignOut(true)}><X size={17} /> Sign out of this device</button>
-      ))}
-    </div>
-  )
-}
-
-function AppHeader({ dark, onToggle, guest, profile, rooms, onForgetRoom, onProfileChange, onSignOut }) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [sheet, setSheet] = useState(null)
-  const closeMenu = () => setMenuOpen(false)
-  useBackDismiss(menuOpen || Boolean(sheet), () => {
-    if (sheet) setSheet(null)
-    else setMenuOpen(false)
-  })
+/**
+ * The header is a brand, the theme switch and the signed-in face. Everything
+ * else - rooms, profile, session, sign out - lives in Settings, so the phone
+ * header has no hidden menu to discover. The avatar still opens the profile
+ * sheet directly, because editing your own name should not be three taps deep.
+ */
+function AppHeader({ dark, onThemeChange, guest, profile, onProfileChange }) {
+  const [profileOpen, setProfileOpen] = useState(false)
+  useBackDismiss(profileOpen, () => setProfileOpen(false))
   return (
     <header className="app-header">
       <div className="brand-lockup"><BrandMark /><div><strong>INchat</strong></div><span className="india-flag" aria-label="India">🇮🇳</span></div>
       <div className="header-actions">
-        <ThemeToggle dark={dark} onToggle={onToggle} />
-        <div className="menu-wrap">
-          <button className="icon-button" aria-label="Open guest menu" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}><Ellipsis size={21} /></button>
-          {menuOpen && (
-            <ProfileMenu
-              guest={guest}
-              profile={profile}
-              onClose={closeMenu}
-              onOpenProfile={() => { closeMenu(); setSheet('profile') }}
-              onOpenRooms={() => { closeMenu(); setSheet('rooms') }}
-              onSignOut={() => { closeMenu(); onSignOut() }}
-            />
-          )}
-        </div>
+        <ThemeSwitch dark={dark} onChange={onThemeChange} />
+        {guest && (
+          <button type="button" className="header-account" aria-label={`Open ${guest.displayName || 'guest'} profile`} title="My profile" onClick={() => setProfileOpen(true)}>
+            <AvatarFace className="header-avatar" src={profile?.avatar?.url} initials={initialsOf(guest.displayName)} />
+          </button>
+        )}
       </div>
-      {sheet === 'profile' && guest && <ProfileSheet guest={guest} profile={profile} onProfileChange={onProfileChange} onClose={() => setSheet(null)} />}
-      {sheet === 'rooms' && <RoomsSheet rooms={rooms} onForgetRoom={onForgetRoom} onClose={() => setSheet(null)} />}
+      {profileOpen && guest && <ProfileSheet guest={guest} profile={profile} onProfileChange={onProfileChange} onClose={() => setProfileOpen(false)} />}
     </header>
   )
 }
 
-function SearchBar({ value, onChange, count }) {
+/**
+ * One pill, one popover. The old hint strip floated under the field with no
+ * relationship to what was typed; this lists the rooms that actually match and
+ * opens one on click, so the dropdown is a shortcut rather than decoration.
+ */
+function SearchBar({ value, onChange, count, results = [], onPick }) {
   const [focused, setFocused] = useState(false)
+  const showing = focused && Boolean(value.trim())
   return (
-    <div className={`search-wrap ${focused ? 'focused' : ''}`}>
-      <Search size={18} aria-hidden="true" />
-      <input value={value} onChange={(event) => onChange(event.target.value)} onFocus={() => setFocused(true)} onBlur={() => setTimeout(() => setFocused(false), 150)} placeholder="Search your rooms" aria-label="Search your rooms" />
-      {value && <button className="clear-search" aria-label="Clear search" onMouseDown={(event) => event.preventDefault()} onClick={() => onChange('')}><X size={16} /></button>}
-      {focused && !value && <div className="search-hint"><Sparkles size={14} /> Find a room you have joined on this device</div>}
-      {value && <span className="result-count">{count}</span>}
+    <div className="search-region">
+      <div className={`search-wrap ${focused ? 'focused' : ''}`}>
+        <Search size={18} aria-hidden="true" />
+        <input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => window.setTimeout(() => setFocused(false), 160)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') { onChange(''); event.currentTarget.blur() }
+            if (event.key === 'Enter' && results[0]) { onPick?.(results[0]); onChange('') }
+          }}
+          placeholder="Search rooms"
+          aria-label="Search your rooms"
+          aria-expanded={showing}
+          aria-controls="room-search-results"
+          role="combobox"
+        />
+        {value
+          ? <button className="clear-search" aria-label="Clear search" onMouseDown={(event) => event.preventDefault()} onClick={() => onChange('')}><X size={16} /></button>
+          : <span className="search-kbd" aria-hidden="true">/</span>}
+      </div>
+      {showing && (
+        <div className="search-panel" id="room-search-results" role="listbox" aria-label="Matching rooms">
+          <p className="search-panel-head"><span>{count} {count === 1 ? 'match' : 'matches'}</span><kbd>Enter</kbd></p>
+          {results.length ? results.map((chat) => (
+            <button
+              key={chat.id}
+              type="button"
+              role="option"
+              aria-selected="false"
+              className="search-result"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { onPick?.(chat); onChange('') }}
+            >
+              <Avatar chat={chat} small />
+              <span><strong>{chat.name}</strong><small>#{chat.id}{chat.message ? ` · ${chat.message}` : ''}</small></span>
+              <ChevronRight size={15} aria-hidden="true" />
+            </button>
+          )) : <p className="search-empty">No room on this device matches “{value.trim()}”.</p>}
+        </div>
+      )}
     </div>
   )
 }
@@ -1044,7 +1032,7 @@ function PairingSection({ chat, session }) {
             </li>
           )}
         </ul>
-      ) : <p className="settings-empty">Loading who is in this room…</p>}
+      ) : <div className="settings-inline-skeleton" role="status" aria-label="Reading who is in this room"><span /><span /></div>}
       {code && (
         <div className="pairing-code">
           <code>{code}</code>
@@ -2086,19 +2074,18 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       <div className="preview-body" ref={previewBodyRef} aria-live="polite" aria-busy={bodyPhase === 'skeleton'}>
         {historyCursor !== null && !!visibleMessages.length && (
           <div className="room-older-messages">
-            <button type="button" className="btn" onClick={loadOlder} disabled={loadingOlder}>
-              {loadingOlder ? 'Loading…' : 'Load older messages'}
+            <button type="button" className={`btn${loadingOlder ? ' is-loading' : ''}`} onClick={loadOlder} disabled={loadingOlder} aria-label={loadingOlder ? 'Loading older messages' : 'Load older messages'}>
+              {loadingOlder ? <span className="loading-dots" aria-hidden="true"><i /><i /><i /></span> : 'Load older messages'}
             </button>
           </div>
         )}
         {bodyPhase === 'skeleton' && <>
-          <p className="feed-loading" role="status">Opening this chat from this device…</p>
-          {/* The shapes are decoration; the line above is what a screen reader gets. */}
+          <span className="sr-only" role="status">Opening this chat from this device</span>
           <div className="transcript-skeleton" aria-hidden="true">
             {Array.from({ length: SKELETON_ROWS }, (row, index) => <span key={index} className={`skeleton-bubble${index % 2 ? ' skeleton-out' : ' skeleton-in'}`} />)}
           </div>
         </>}
-        {bodyPhase === 'connecting' && <p className="feed-loading" role="status">Connecting to #{chat.id}…</p>}
+        {bodyPhase === 'connecting' && <div className="transcript-connecting" role="status"><span className="loading-dots" aria-hidden="true"><i /><i /><i /></span><span>Joining <b>#{chat.id}</b></span></div>}
         {hydrateFailure && <p className="feed-failure" role="alert"><AlertCircle size={14} />{hydrateFailure} <button type="button" className="btn" onClick={() => setHydrateAttempt((count) => count + 1)}>Try again</button></p>}
         {bodyPhase === 'empty' && <div className="room-first-message"><MessageCircle size={25} /><strong>{chatSettings.clearedAt ? 'Your history here is cleared' : 'This room is ready'}</strong><span>Say hello to whoever holds the other seat in <b>#{chat.id}</b>.</span></div>}
         {searchIsActive && displayedMessages.length === 0 && <div className="message-search-empty"><Search size={20} /><strong>No matching messages</strong><span>Try another word, type or date range.</span></div>}
@@ -2141,7 +2128,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       </div>
       <div className="preview-compose">
         <p className="preview-demo-note">Room: <strong>#{chat.id}</strong> · guest chat, no account required</p>
-        {uploading && <p className="uploading-indicator" role="status">Uploading media…</p>}
+        {uploading && <p className="uploading-indicator" role="status"><span className="loading-dots" aria-hidden="true"><i /><i /><i /></span>Preparing your media</p>}
         {recording && <p className="recording-indicator" role="status"><i /> Recording voice · {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, '0')} — tap the mic to send</p>}
         <form className="compose-controls" onSubmit={sendMessage}>
           <div className="compose-field">
@@ -2289,7 +2276,14 @@ function CallWindow({ calls, chat }) {
         : calls.call.status === 'failed' ? 'Connection failed' : 'Connecting…'
 
   const gestureProps = (kind) => ({
-    onPointerDown: (event) => startGesture(kind, event),
+    onPointerDown: (event) => {
+      // Controls sit inside the drag surface (the header and the minimised
+      // pill). Capturing the pointer there retargeted the click to the drag
+      // surface, so Float, Minimise, Expand and End call never fired; a press
+      // on a control must not start a drag.
+      if (kind === 'drag' && event.target.closest?.('button, a, input, select, textarea')) return
+      startGesture(kind, event)
+    },
     onPointerMove: moveGesture,
     onPointerUp: endGesture,
     onPointerCancel: endGesture,
@@ -2298,17 +2292,36 @@ function CallWindow({ calls, chat }) {
   const shellClass = `call-window${calls.call.mode === 'video' ? ' video-call-window' : ''}${mode === 'floating' ? ' is-floating' : ''}${mode === 'minimized' ? ' is-minimized' : ''}${fullscreen ? ' is-fullscreen' : ''}`
   const shellStyle = mode === 'docked' && !fullscreen ? undefined : frameStyle(frame, 'floating')
 
+  /**
+   * Readiness is "has this call shown a frame at all", not "is a frame arriving
+   * right now". The old `onWaiting` reset flipped the placeholder back over a
+   * perfectly good last frame every time the network hiccupped, which is what
+   * made the stage blink. Once a frame has played it stays; `waiting` only dims
+   * the video for a moment.
+   */
+  const remoteHasVideo = Boolean(calls.remoteStream?.getVideoTracks?.().length)
+  const waitingLabel = calls.call.status === 'incoming' ? 'Video call'
+    : calls.call.status === 'failed' ? 'Video connection failed'
+      : calls.call.status === 'active' ? (remoteHasVideo ? 'Waiting for the first frame' : 'Camera is off')
+        : 'Connecting video'
+
   const stage = calls.call.mode === 'video' ? (
-    <div className="call-video-stage">
-      <video ref={calls.remoteVideoRef} className="remote-call-video" autoPlay playsInline onClick={calls.retryRemotePlayback} onPlaying={calls.markRemoteVideoReady} onWaiting={calls.markRemoteVideoWaiting} />
-      <video ref={calls.localVideoRef} className={`local-call-video${calls.cameraFacing === 'user' ? ' is-mirrored' : ''}`} autoPlay muted playsInline />
-      {fullscreen && (
-        <div className="call-stage-overlay">
-          <span className={`call-live-dot${calls.call.status === 'active' ? ' is-live' : ''}`} aria-hidden="true" />
-          <div><strong>{calls.call.peerName}</strong><small>{statusLine}</small></div>
-        </div>
-      )}
-      {!calls.remoteVideoReady && <div className="call-video-placeholder"><span>{calls.call.peerName.slice(0, 1).toUpperCase()}</span><strong>{calls.call.status === 'incoming' ? 'Video call' : calls.call.status === 'failed' ? 'Video connection failed' : 'Connecting video…'}</strong><small>{calls.call.status === 'failed' ? 'A TURN relay may be required on this network.' : 'Waiting for the first video frame…'}</small></div>}
+    <div className={`call-video-stage${calls.call.status === 'active' ? ' is-live' : ''}`}>
+      <video ref={calls.remoteVideoRef} className="remote-call-video" autoPlay playsInline onClick={calls.retryRemotePlayback} onPlaying={calls.markRemoteVideoReady} />
+      <video ref={calls.localVideoRef} className={`local-call-video${calls.cameraFacing === 'user' ? ' is-mirrored' : ''}${calls.cameraOff ? ' is-camera-off' : ''}`} autoPlay muted playsInline />
+      <div className="call-stage-overlay" data-visible={fullscreen ? 'true' : 'false'}>
+        <span className={`call-live-dot${calls.call.status === 'active' ? ' is-live' : ''}`} aria-hidden="true" />
+        <div><strong>{calls.call.peerName}</strong><small>{statusLine}</small></div>
+      </div>
+      {/* Kept mounted and faded, not removed: swapping the element in and out
+          was the other half of the stage blink. */}
+      <div className="call-video-placeholder" data-visible={!calls.remoteVideoReady} aria-hidden={calls.remoteVideoReady ? 'true' : undefined}>
+        <span>{calls.call.peerName.slice(0, 1).toUpperCase()}</span>
+        <strong>{waitingLabel}</strong>
+        <small>{calls.call.status === 'failed'
+          ? 'A TURN relay may be required on this network.'
+          : calls.call.status === 'active' && !remoteHasVideo ? 'Their audio is still connected.' : 'The first frame is on its way.'}</small>
+      </div>
     </div>
   ) : (
     <div className={`audio-call-stage${calls.call.status === 'active' ? ' is-live' : ''}`}>
@@ -2320,23 +2333,21 @@ function CallWindow({ calls, chat }) {
     </div>
   )
 
-  if (mode === 'minimized') {
-    return (
-      <div ref={shellRef} className={shellClass} style={shellStyle} role="group" aria-label={`${calls.call.mode} call with ${calls.call.peerName}, minimised`} {...gestureProps('drag')}>
-        <audio ref={calls.remoteAudioRef} autoPlay />
-        <span className="call-pill-dot" aria-hidden="true" />
-        <span className="call-pill-peer">{calls.call.peerName}</span>
-        <span className="call-pill-time">{calls.call.status === 'active' ? callDuration(activeAtRef.current) : statusLine}</span>
-        <button type="button" className="call-pill-expand" onClick={() => changeMode(calls.call.mode === 'video' ? 'floating' : 'docked')}><Maximize2 size={15} /> Expand</button>
-        <button type="button" className="call-pill-end" aria-label="End call" onClick={calls.hangup}><PhoneOff size={15} /></button>
-      </div>
-    )
-  }
+  const minimizedNode = (
+    <div ref={shellRef} className={shellClass} style={shellStyle} role="group" aria-label={`${calls.call.mode} call with ${calls.call.peerName}, minimised`} {...gestureProps('drag')}>
+      <audio ref={calls.remoteAudioRef} autoPlay />
+      <span className="call-pill-dot" aria-hidden="true" />
+      <span className="call-pill-peer">{calls.call.peerName}</span>
+      <span className="call-pill-time">{calls.call.status === 'active' ? callDuration(activeAtRef.current) : statusLine}</span>
+      <button type="button" className="call-pill-expand" onClick={() => changeMode(calls.call.mode === 'video' ? 'floating' : 'docked')}><Maximize2 size={15} /> Expand</button>
+      <button type="button" className="call-pill-end" aria-label="End call" onClick={calls.hangup}><PhoneOff size={15} /></button>
+    </div>
+  )
 
   const windowNode = (
     <div ref={shellRef} className={shellClass} style={shellStyle} role="dialog" aria-modal={mode === 'docked' ? 'true' : undefined} aria-label={`${calls.call.mode} call with ${calls.call.peerName}`}>
       <div className="call-window-head" {...gestureProps('drag')}>
-        <div className="call-window-title"><strong>{calls.call.peerName}</strong><span>{statusLine}</span><small>#{chat.id}</small></div>
+        <div className="call-window-title"><strong>{calls.call.peerName}</strong><span aria-live="polite">{statusLine}</span><small>#{chat.id}</small></div>
         <div className="call-window-actions">
           <button type="button" aria-label={mode === 'floating' ? 'Dock the call window' : 'Float the call window'} title={mode === 'floating' ? 'Dock' : 'Float'} onClick={() => changeMode(mode === 'floating' ? 'docked' : 'floating')}><Minimize2 size={15} /></button>
           <button type="button" aria-label="Minimise the call" title="Minimise" onClick={() => changeMode('minimized')}><ChevronLeft size={15} /></button>
@@ -2357,9 +2368,18 @@ function CallWindow({ calls, chat }) {
     </div>
   )
 
-  return mode === 'docked' && !fullscreen
-    ? <div className="call-overlay" role="presentation">{windowNode}</div>
-    : windowNode
+  /**
+   * The host element never changes type. Rendered conditionally inside an
+   * overlay and outside it, React tore the whole window down on every
+   * dock/float switch - a new <video>, an empty srcObject, and the flash that
+   * looked like a broken container. Now only the host's class changes.
+   */
+  const docked = mode === 'docked' && !fullscreen
+  return (
+    <div className={`call-window-host${docked ? ' is-docked' : ''}${mode === 'minimized' ? ' is-minimized-host' : ''}`} role={docked ? 'presentation' : undefined}>
+      {mode === 'minimized' ? minimizedNode : windowNode}
+    </div>
+  )
 }
 
 function JoinRoomDialog({ initialRoom, initialName, onClose, onJoin }) {
@@ -2545,7 +2565,7 @@ function MainDashboard({ guest, rooms, onJoinRoom, onLatestMessage, onRoomRead, 
       <div ref={gridRef} className={`dashboard-grid ${activeChat ? 'chat-open' : ''}${isResizing ? ' is-resizing' : ''}`} style={activeChat ? { '--inbox-pane-width': `${currentInboxWidth}px` } : undefined}>
         <section className="inbox-card">
           <div className="section-title room-list-title"><div><h2>Your rooms</h2><span>{rooms.length} {rooms.length === 1 ? 'room' : 'rooms'} on this device</span></div><button type="button" className="room-add-button" aria-label="Create or join a room" onClick={() => setJoinDialog('')}><Plus size={18} /></button></div>
-          <SearchBar value={query} onChange={setQuery} count={filtered.length} />
+          <SearchBar value={query} onChange={setQuery} count={filtered.length} results={filtered.slice(0, 6)} onPick={openRoom} />
           <div className="list-filters" role="group" aria-label="Filter conversations">
             {LIST_FILTERS.map((item) => (
               <button
@@ -2729,6 +2749,8 @@ function UpdatesPage({ guest }) {
 
   const groups = groupFeed(statuses, now)
   const ordered = playOrder(statuses, now)
+  const liveCount = groups.mine.length + groups.unseen.length
+  const hasCards = Boolean((guest && groups.mine.length) || groups.unseen.length || (showSeen && groups.seen.length))
   const playing = openId ? ordered.find((card) => card.id === openId) : null
   useDialogTrap(viewerRef, { active: Boolean(playing), onClose: () => setOpenId(null) })
   useDialogTrap(viewersRef, { active: Boolean(viewers), onClose: () => setViewers(null) })
@@ -2788,6 +2810,25 @@ function UpdatesPage({ guest }) {
 
   return (
     <main className="content-page updates-page">
+      <header className="updates-hero">
+        <div>
+          <p className="eyebrow">UPDATES</p>
+          <h1>Small moments, one day only</h1>
+          <p className="updates-hero-copy">Text, photos and short videos for the rooms on this device. Every update clears itself after 24 hours, so the feed never piles up.</p>
+        </div>
+        <div className="updates-hero-side">
+          <div className="updates-hero-stats">
+            <span><strong>{liveCount}</strong><small>live now</small></span>
+            <span><strong>{groups.seen.length}</strong><small>already seen</small></span>
+            <span><strong>24h</strong><small>then gone</small></span>
+          </div>
+          <div className="updates-hero-actions">
+            <button type="button" className="updates-hero-primary" onClick={() => setComposerOpen((value) => !value)} disabled={posting || !guest} title={guest ? undefined : 'Join a room first'}><Plus size={16} /> Text update</button>
+            <button type="button" className="btn" onClick={() => fileInputRef.current?.click()} disabled={posting || !guest} title={guest ? undefined : 'Join a room first'}><Image size={16} /> Photo or video</button>
+          </div>
+        </div>
+      </header>
+
       <section className="updates-toolbar-card" aria-label="Recent updates">
         <div className="section-title">
           <h2>Recent updates</h2>
@@ -2797,17 +2838,17 @@ function UpdatesPage({ guest }) {
                 {showSeen ? 'Show less' : 'View all'}
               </button>
             )}
-            <button type="button" className="updates-add-button" aria-label="Add a photo or video update" title="Add a photo or video update" onClick={() => fileInputRef.current?.click()} disabled={posting}><Image size={18} /></button>
-            <button type="button" className="updates-add-button" aria-label="Add a text update" title="Add a text update" onClick={() => setComposerOpen((value) => !value)} disabled={posting}><Plus size={18} /></button>
+            <button type="button" className="updates-add-button" aria-label="Add a photo or video update" title="Add a photo or video update" onClick={() => fileInputRef.current?.click()} disabled={posting || !guest}><Image size={18} /></button>
+            <button type="button" className="updates-add-button" aria-label="Add a text update" title="Add a text update" onClick={() => setComposerOpen((value) => !value)} disabled={posting || !guest}><Plus size={18} /></button>
           </div>
         </div>
         <input ref={fileInputRef} className="hidden-file-input" tabIndex={-1} type="file" accept="image/*,video/*" onChange={postMediaCard} />
         {notice && <p className="updates-action-notice" role="status">{notice}</p>}
         {failure && <p className="feed-failure" role="alert"><AlertCircle size={14} />{failure}</p>}
-        {posting && <p className="feed-loading">Posting your update…</p>}
+        {posting && <p className="updates-action-notice is-busy" role="status"><span className="loading-dots" aria-hidden="true"><i /><i /><i /></span>Posting your update</p>}
       </section>
 
-      {composerOpen && (
+      {composerOpen && guest && (
         <section className="status-composer" aria-label="New text update">
           <div className="status-composer-canvas" style={{ background: color }}>
             <textarea
@@ -2838,13 +2879,27 @@ function UpdatesPage({ guest }) {
         </section>
       )}
 
-      {((guest && groups.mine.length > 0) || groups.unseen.length > 0 || (showSeen && groups.seen.length > 0)) && (
+      {hasCards ? (
         <div className="updates-live-list" aria-label="Live updates">
           {guest && groups.mine.map(cardRow)}
           {groups.unseen.map(cardRow)}
           {showSeen && groups.seen.map(cardRow)}
         </div>
-      )}
+      ) : guest && !posting ? (
+        <div className="updates-empty-state">
+          <span className="updates-empty-orb" aria-hidden="true"><Sparkles size={22} /></span>
+          <strong>No updates yet</strong>
+          <p>Post the first one. A photo, a short video or a line of text stays for a day, then clears itself.</p>
+          <button type="button" className="updates-hero-primary" onClick={() => setComposerOpen(true)}><Plus size={16} /> Write an update</button>
+        </div>
+      ) : !guest ? (
+        <div className="updates-empty-state">
+          <span className="updates-empty-orb" aria-hidden="true"><MessageCircle size={22} /></span>
+          <strong>Join a room to see updates</strong>
+          <p>Updates belong to a guest session. Open Chats, join a room with its pairing code, and this feed fills in.</p>
+          <NavLink to="/" className="updates-hero-primary"><MessageCircle size={16} /> Open Chats</NavLink>
+        </div>
+      ) : null}
 
       {playing && (
         <div ref={viewerRef} className="status-viewer" role="dialog" aria-modal="true" aria-label={`Update from ${playing.author?.displayName || (playing.mine ? 'you' : 'a guest')}`}>
@@ -2872,7 +2927,9 @@ function UpdatesPage({ guest }) {
       {viewers && (
         <div ref={viewersRef} className="status-viewers" role="dialog" aria-modal="true" aria-label="Guests who saw this update">
           <div className="status-viewers-head"><strong>Seen by</strong><button type="button" aria-label="Close" onClick={() => setViewers(null)}><X size={16} /></button></div>
-          {viewers.loading ? <p className="feed-loading">Loading…</p> : (viewers.rows.length ? viewers.rows.map((row) => (
+          {viewers.loading ? (
+            <div className="status-viewer-skeleton" aria-hidden="true"><span /><span /><span /></div>
+          ) : (viewers.rows.length ? viewers.rows.map((row) => (
             <div className="status-viewer-row" key={row.userId}>
               <span>{row.displayName || 'Guest'}</span>
               <small>{new Date(Number(row.at) || now).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</small>
@@ -2957,7 +3014,9 @@ function ShortsPage({ guest, rooms, onOpenRoom }) {
   return (
     <main className="content-page shorts-page">
       {failure && <p className="feed-failure" role="alert"><AlertCircle size={14} />{failure}</p>}
-      {loading && <p className="feed-loading">Reading the videos in your rooms…</p>}
+      {loading ? (
+        <div className="shorts-skeleton" aria-hidden="true"><span /><span /><span /></div>
+      ) : null}
       {items.length ? (
         <div className="shorts-track" ref={trackRef} tabIndex={0} role="region" aria-label="Short video feed" onKeyDown={(event) => {
           if (event.key === 'ArrowDown') { event.preventDefault(); step(1) }
@@ -3037,18 +3096,42 @@ function CallsPage({ guest, notice: returnedNotice, onOpenRoom, onCallBack }) {
 
   if (!guest) {
     return (
-      <main className="content-page"><section className="calls-card"><div className="section-title"><h2>Calls</h2><span>Room calling</span></div><div className="empty-state"><div className="empty-icon"><Phone size={21} /></div><h3>Join a room to start calling</h3><p>Calls are made from inside a room. Once you have joined one, the history of your calls appears here.</p></div></section></main>
+      <main className="content-page calls-page">
+        <header className="calls-hero">
+          <div>
+            <p className="eyebrow">CALLS</p>
+            <h1>Every ring, kept in order</h1>
+            <p className="calls-hero-copy">Calls start inside a room. Accept, decline or call back — this page keeps the trail, and nothing is shared with the other seat.</p>
+          </div>
+        </header>
+        <section className="calls-card" aria-label="Call history">
+          <div className="empty-state"><div className="empty-icon"><Phone size={21} /></div><h3>Join a room to start calling</h3><p>Calls are made from inside a room. Once you have joined one, the history of your calls appears here.</p></div>
+        </section>
+      </main>
     )
   }
 
   const groups = groupCallsByDay(calls)
+  const missedCount = calls.filter((call) => call.status === 'missed').length
+  const outgoingCount = calls.filter((call) => call.direction === 'out').length
   return (
     <main className="content-page calls-page">
-      <section className="calls-card" aria-label="Call history">
-        <div className="section-title">
-          <h2>Calls</h2>
-          <span>{loading ? 'Loading' : `${calls.length} ${calls.length === 1 ? 'call' : 'calls'}`}</span>
+      <header className="calls-hero">
+        <div>
+          <p className="eyebrow">CALLS</p>
+          <h1>Every ring, kept in order</h1>
+          <p className="calls-hero-copy">Calls start inside a room. Accept, decline or call back — this page keeps the trail, and nothing is shared with the other seat.</p>
         </div>
+        <span className="calls-hero-count">{loading && !calls.length ? 'Syncing' : `${calls.length} ${calls.length === 1 ? 'call' : 'calls'}`}</span>
+      </header>
+      <section className="calls-card" aria-label="Call history">
+        {calls.length ? (
+          <div className="calls-stats">
+            <span><Phone size={14} /><strong>{calls.length}</strong><small>total</small></span>
+            <span><ArrowUpRight size={14} /><strong>{outgoingCount}</strong><small>outgoing</small></span>
+            <span className={missedCount ? 'is-warn' : ''}><PhoneOff size={14} /><strong>{missedCount}</strong><small>missed</small></span>
+          </div>
+        ) : null}
         {(returnedNotice || notice) && <p className="feed-notice" role="status">{returnedNotice || notice}</p>}
         {failure && <p className="feed-failure" role="alert"><AlertCircle size={14} />{failure}</p>}
         {calls.length ? (
@@ -3096,7 +3179,9 @@ function CallsPage({ guest, notice: returnedNotice, onOpenRoom, onCallBack }) {
             ))}
           </>
         ) : loading ? (
-          <p className="feed-loading">Loading your calls…</p>
+          <div className="calls-skeleton" aria-hidden="true">
+            {[0, 1, 2, 3].map((row) => <span key={row}><i /><span><b /><em /></span></span>)}
+          </div>
         ) : (
           <div className="empty-state"><div className="empty-icon"><Phone size={21} /></div><h3>No calls yet</h3><p>Open a room and use the phone or video button to call a guest who is online there. Calls you make and receive are listed here.</p></div>
         )}
@@ -3107,6 +3192,21 @@ function CallsPage({ guest, notice: returnedNotice, onOpenRoom, onCallBack }) {
 
 function BottomNavigation() {
   return <nav className="bottom-nav" aria-label="Primary navigation">{navItems.map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'active' : ''}><Icon size={20} /><span>{label}</span></NavLink>)}</nav>
+}
+
+/** The Settings chunk is small, so the wait is one paint; a skeleton reads as the page rather than a spinner. */
+function SettingsSkeleton() {
+  return (
+    <main className="content-page settings-page" aria-busy="true">
+      <span className="sr-only" role="status">Loading your settings</span>
+      <div className="settings-skeleton" aria-hidden="true">
+        <div className="settings-skeleton-hero"><span /><span /><span /></div>
+        <div className="settings-skeleton-grid">
+          {[0, 1, 2, 3].map((card) => <div className="settings-skeleton-card" key={card}><span /><span /><span /></div>)}
+        </div>
+      </div>
+    </main>
+  )
 }
 
 function App() {
@@ -3313,12 +3413,12 @@ function App() {
       <Route path="/shorts" element={<ShortsPage guest={guest} rooms={rooms} onOpenRoom={openRoomFromFeed} />} />
       <Route path="/calls" element={<CallsPage guest={guest} notice={feedNotice} onOpenRoom={(roomId) => openRoomFromFeed(roomId)} onCallBack={(call) => openRoomFromFeed(call.room, { userId: call.peer.userId, displayName: call.peer.displayName, mode: call.mode })} />} />
       <Route path="/settings" element={
-        <Suspense fallback={<main className="content-page settings-page"><div className="settings-loading" role="status"><span /><p>Loading your settings…</p></div></main>}>
+        <Suspense fallback={<SettingsSkeleton />}>
           <SettingsPage
             guest={guest}
             profile={profile}
             dark={dark}
-            onToggleTheme={() => setDark((value) => !value)}
+            onThemeChange={(next) => setDark(next === 'dark')}
             onProfileChange={setProfile}
             rooms={rooms}
             onForgetRoom={forgetRoomOnDevice}
@@ -3331,7 +3431,7 @@ function App() {
     </Routes>
   )
 
-  return <div className={shellClass}><AppHeader guest={guest} profile={profile} onProfileChange={setProfile} rooms={rooms} dark={dark} onToggle={() => setDark((value) => !value)} onForgetRoom={forgetRoomOnDevice} onSignOut={signOut} /><div className="mobile-location"><Menu size={18} /><span>{location.pathname === '/' ? 'Chats' : location.pathname.slice(1)}</span></div>{routes}<BottomNavigation /></div>
+  return <div className={shellClass}><AppHeader guest={guest} profile={profile} onProfileChange={setProfile} dark={dark} onThemeChange={(next) => setDark(next === 'dark')} />{routes}<BottomNavigation /></div>
 }
 
 export default App

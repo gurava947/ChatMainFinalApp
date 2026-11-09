@@ -26,7 +26,7 @@
   // exists to prevent.
   try {
     var accent = localStorage.getItem('inchat-accent');
-    document.documentElement.dataset.accent = ['teal', 'indigo', 'rose', 'amber'].indexOf(accent) === -1 ? 'teal' : accent;
+    document.documentElement.dataset.accent = ['teal', 'indigo', 'rose', 'amber', 'sky', 'plum'].indexOf(accent) === -1 ? 'teal' : accent;
     document.documentElement.dataset.motion = localStorage.getItem('inchat-motion') === 'reduced' ? 'reduced' : 'full';
   } catch (err) {
     document.documentElement.dataset.accent = 'teal';

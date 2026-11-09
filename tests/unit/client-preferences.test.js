@@ -17,7 +17,7 @@ describe('appearance preferences', () => {
   test('a fresh device starts on teal with full motion', () => {
     expect(prefs.readAccent()).toBe('teal');
     expect(prefs.readMotion()).toBe(false);
-    expect(prefs.ACCENTS.map((entry) => entry.id)).toEqual(['teal', 'indigo', 'rose', 'amber']);
+    expect(prefs.ACCENTS.map((entry) => entry.id)).toEqual(['teal', 'indigo', 'rose', 'amber', 'sky', 'plum']);
   });
 
   test('every family carries both members of its pair', () => {

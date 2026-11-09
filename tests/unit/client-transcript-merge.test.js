@@ -227,7 +227,9 @@ describe('what the transcript shows while its first page arrives', () => {
     // themselves stay out of the accessibility tree because the one line above
     // them already says what is happening.
     expect(APP_SOURCE).toMatch(/className="preview-body"[^>]*aria-busy=\{bodyPhase === 'skeleton'\}/);
-    expect(APP_SOURCE).toMatch(/<p className="feed-loading" role="status">Opening this chat from this device/);
+    // The connecting line is inline progress, not a page spinner: the dots run
+    // inside the transcript so the layout never jumps.
+    expect(APP_SOURCE).toMatch(/bodyPhase === 'connecting' && <div className="transcript-connecting" role="status">/);
     expect(APP_SOURCE).toMatch(/<div className="transcript-skeleton" aria-hidden="true">/);
   });
 
