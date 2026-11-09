@@ -1059,7 +1059,7 @@ html[data-motion='reduced'] *::after {
 .calls-stats span strong { color: var(--ink); font-size: 12px; }
 .calls-stats span.is-warn { border-color: color-mix(in srgb, #cf6e77 34%, var(--line)); color: var(--danger-text, #b74854); }
 .calls-stats span.is-warn strong { color: var(--danger-text, #b74854); }
-.calls-page .call-row { padding: 11px; border-top: 0; border-radius: 14px; transition: background .16s ease; }
+.calls-page .call-row { margin: 0 0 12px; padding: 11px; border-top: 0; border-radius: 14px; transition: background .16s ease; }
 .calls-page .call-row:hover { background: var(--surface-2); }
 .calls-page .calls-day { margin-top: 12px; }
 .calls-page .calls-day-label { margin-top: 6px; }
