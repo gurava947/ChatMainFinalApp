@@ -169,7 +169,7 @@ describe('writes', () => {
   it('sends with an idempotency token and reports the acknowledgement', async () => {
     const { client, calls } = fake({
       send_message: {
-        data: [{ id: 'm-9', created_at: '2026-11-03T10:00:00.000Z', sender_id: 'me', duplicate: false }],
+        data: [{ message_id: 'm-9', message_created_at: '2026-11-03T10:00:00.000Z', message_sender_id: 'me', duplicate: false }],
         error: null
       }
     });
@@ -198,7 +198,7 @@ describe('writes', () => {
   it('tells the caller when the server already held the message', async () => {
     const { client } = fake({
       send_message: {
-        data: [{ id: 'm-9', created_at: '2026-11-03T10:00:00.000Z', sender_id: 'me', duplicate: true }],
+        data: [{ message_id: 'm-9', message_created_at: '2026-11-03T10:00:00.000Z', message_sender_id: 'me', duplicate: true }],
         error: null
       }
     });
@@ -220,7 +220,7 @@ describe('writes', () => {
   it('carries the poll payload through', async () => {
     const { client, calls } = fake({
       send_message: {
-        data: [{ id: 'm-9', created_at: '2026-11-03T10:00:00.000Z', sender_id: 'me', duplicate: false }],
+        data: [{ message_id: 'm-9', message_created_at: '2026-11-03T10:00:00.000Z', message_sender_id: 'me', duplicate: false }],
         error: null
       }
     });

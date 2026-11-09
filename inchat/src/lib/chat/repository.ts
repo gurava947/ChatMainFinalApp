@@ -185,17 +185,17 @@ export function createRepository(client: DbClient) {
         p_payload: input.payload ?? {}
       });
       const ack = rows<{
-        id: string;
-        created_at: string;
-        sender_id: string;
+        message_id: string;
+        message_created_at: string;
+        message_sender_id: string;
         duplicate: boolean;
       }>('send_message', result)[0];
 
       if (!ack) throw new ChatRpcFailure('send_message', { message: 'no acknowledgement row' });
       return {
-        id: ack.id,
-        createdAt: ms(ack.created_at),
-        senderId: ack.sender_id,
+        id: ack.message_id,
+        createdAt: ms(ack.message_created_at),
+        senderId: ack.message_sender_id,
         duplicate: ack.duplicate === true
       };
     },

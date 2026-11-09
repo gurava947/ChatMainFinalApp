@@ -33,6 +33,14 @@ as $$
   end;
 $$;
 
+-- These are created after the privilege pass in the RLS migration, so the
+-- default PUBLIC execute grant has to be taken away here instead.
+revoke all on function public.private_path_conversation(text) from public, anon;
+grant execute on function public.private_path_conversation(text) to authenticated;
+
+revoke all on function public.private_path_uploader(text) from public, anon;
+grant execute on function public.private_path_uploader(text) to authenticated;
+
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'chat-media',

@@ -186,8 +186,13 @@ begin
     'public.my_unread_total()'
   ]
   loop
-    execute format('revoke all on function %s from public, anon', fn);
-    execute format('grant execute on function %s to authenticated', fn);
+    -- The storage path helpers live in the storage migration, which runs after
+    -- this one; that migration locks them down itself. Skipping anything not
+    -- created yet keeps this file applicable in dependency order either way.
+    if to_regprocedure(fn) is not null then
+      execute format('revoke all on function %s from public, anon', fn);
+      execute format('grant execute on function %s to authenticated', fn);
+    end if;
   end loop;
 end;
 $$;

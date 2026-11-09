@@ -469,7 +469,10 @@ create or replace function public.send_message(
   p_body text default '',
   p_payload jsonb default '{}'::jsonb
 )
-returns table (id uuid, created_at timestamptz, sender_id uuid, duplicate boolean)
+-- OUT column names must not repeat a table column name: plpgsql then cannot
+-- tell the ON CONFLICT target from the variable and refuses to run the insert
+-- (42702). The ack fields are prefixed instead of forcing a resolution rule.
+returns table (message_id uuid, message_created_at timestamptz, message_sender_id uuid, duplicate boolean)
 language plpgsql
 security definer
 set search_path = public, pg_temp
