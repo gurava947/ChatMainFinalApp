@@ -232,19 +232,43 @@ describe('about note', () => {
   });
 });
 
-describe('profile menu wiring', () => {
+describe('header and settings entry points', () => {
   const app = () => fs.readFileSync(path.join(CLIENT, 'App.jsx'), 'utf8');
 
-  test('the header passes real data and handlers into the profile entry', () => {
+  test('the header keeps only the brand and the theme switch', () => {
     const source = app();
-    expect(source).toMatch(/<AppHeader[^\n]*guest=\{guest\}/);
-    expect(source).toMatch(/<AppHeader[^\n]*profile=\{profile\}/);
-    expect(source).toMatch(/<AppHeader[^\n]*onProfileChange=\{setProfile\}/);
-    expect(source).toMatch(/<AppHeader[^\n]*dark=\{dark\}/);
-    expect(source).toMatch(/<AppHeader[^\n]*onThemeChange=/);
-    // Rooms and sign out moved into Settings, so the header no longer carries them.
+    expect(source).toMatch(/<AppHeader dark=\{dark\} onThemeChange=/);
+    // Every account surface - profile, rooms, session - lives in Settings, so
+    // the header does not receive identity or profile handlers at all.
+    expect(source).not.toMatch(/<AppHeader[^\n]*guest=/);
+    expect(source).not.toMatch(/<AppHeader[^\n]*profile=/);
+    expect(source).not.toMatch(/<AppHeader[^\n]*onProfileChange=/);
     expect(source).not.toMatch(/<AppHeader[^\n]*onSignOut=/);
     expect(source).not.toMatch(/<AppHeader[^\n]*onForgetRoom=/);
+  });
+
+  test('the header has no avatar, profile sheet, or hidden menu', () => {
+    const source = app();
+    const header = source.slice(source.indexOf('function AppHeader'), source.indexOf('function AvatarFace'));
+    expect(header).not.toMatch(/Ellipsis/);
+    expect(header).not.toMatch(/header-account/);
+    expect(header).not.toMatch(/ProfileSheet/);
+    expect(header).toMatch(/<ThemeSwitch dark=\{dark\} onChange=\{onThemeChange\}/);
+    expect(source).not.toMatch(/function ProfileMenu/);
+    expect(source).not.toMatch(/function ProfileSheet/);
+    // The initials helper survives for sender avatars; it is no longer a
+    // header control.
+    expect(source).toMatch(/function AvatarFace/);
+    expect(header).not.toMatch(/AvatarFace/);
+  });
+
+  test('the settings route still owns profile editing and sign out', () => {
+    const source = app();
+    const route = source.slice(source.indexOf('<Route path="/settings"'), source.indexOf('</Routes>'));
+    expect(route).toMatch(/profile=\{profile\}/);
+    expect(route).toMatch(/onProfileChange=\{setProfile\}/);
+    expect(route).toMatch(/onSignOut=\{signOut\}/);
+    expect(route).toMatch(/onForgetRoom=\{forgetRoomOnDevice\}/);
   });
 
   test('sign out clears device storage and expires the cookie server-side', () => {
@@ -253,33 +277,6 @@ describe('profile menu wiring', () => {
     expect(source).toMatch(/method: 'DELETE', headers: sessionHeaders\(guest\)/);
     expect(source).toMatch(/clearGuest\(\)\s*setGuest\(null\)/);
     expect(source).toMatch(/const forgetRoomOnDevice = \(roomId\) => setRooms\(forgetRoom\(roomId\)\)/);
-  });
-
-  test('the header has no hidden menu and every visible action is wired', () => {
-    const source = app();
-    const header = source.slice(source.indexOf('function AppHeader'), source.indexOf('function SearchBar'));
-    expect(header).not.toMatch(/Ellipsis/);
-    expect(header).toMatch(/<ThemeSwitch dark=\{dark\} onChange=\{onThemeChange\}/);
-    expect(header).toMatch(/onClick=\{\(\) => setProfileOpen\(true\)\}/);
-    expect(source).not.toMatch(/function ProfileMenu/);
-  });
-
-  test('the profile sheet is wired to the real avatar endpoints', () => {
-    const source = app();
-    const sheet = source.slice(source.indexOf('function ProfileSheet'), source.indexOf('function RoomsSheet'));
-    expect(sheet).toMatch(/await uploadAvatar\(guest/);
-    expect(sheet).toMatch(/await removeAvatar\(guest/);
-    expect(sheet).toMatch(/fetchMyProfile\(guest/);
-    expect(sheet).toMatch(/type="file"/);
-    expect(sheet).toMatch(/accept="image\/\*"/);
-  });
-
-  test('the picture only renders when the server has one', () => {
-    const source = app();
-    expect(source).toMatch(/function AvatarFace/);
-    expect(source).toMatch(/src=\{profile\?\.avatar\?\.url\}/);
-    // A missing url must fall back to initials, not to a broken image icon.
-    expect(source).toMatch(/\{src \? <img src=\{src\} alt="" \/> : initials\}/);
   });
 
   test('sender pictures are looked up once per new author', () => {

@@ -6,6 +6,20 @@
  * AA on its own background; one hue cannot serve both themes.
  * ========================================================================== */
 
+/*
+ * Mobile Chrome paints a translucent blue box over whatever was tapped, which
+ * looked like a rogue background behind nav icons and sheet buttons. The
+ * highlight is a browser default rather than app styling, so it is switched off
+ * at the root and the product keeps its own accent ring for keyboard users.
+ */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+a:focus:not(:focus-visible),
+button:focus:not(:focus-visible),
+[role='button']:focus:not(:focus-visible),
+[tabindex]:focus:not(:focus-visible) { outline: none; }
+
 html[data-accent='teal'] {
   --accent: #2dd4bf;
   --accent-deep: #0f766e;
@@ -674,25 +688,9 @@ html[data-motion='reduced'] *::after {
 }
 .theme-switch button svg { flex: none; }
 [data-theme='dark'] .theme-switch button.is-active { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
-.header-account {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--surface-2);
-  transition: border-color .18s ease, transform .18s ease;
-}
-.header-account:hover { border-color: var(--accent); transform: translateY(-1px); }
-.header-avatar { width: 100%; height: 100%; border-radius: 50%; font-size: 12px; }
-.header-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 @media (max-width: 560px) {
   .theme-switch button { width: 32px; height: 32px; padding: 0; }
   .theme-switch button span { display: none; }
-  .header-account { width: 34px; height: 34px; }
 }
 
 /* ---------- Room search: a real popover with live results ---------- */
@@ -794,17 +792,6 @@ html[data-motion='reduced'] *::after {
   box-shadow: 0 6px 18px rgba(9, 25, 21, .08);
 }
 .transcript-connecting b { color: var(--ink); }
-.profile-skeleton { display: grid; gap: 9px; padding: 4px 0; }
-.profile-skeleton span {
-  display: block;
-  height: 44px;
-  border-radius: 12px;
-  background: linear-gradient(100deg, var(--skeleton-base, #e2e9e5) 20%, var(--skeleton-shine, #f4f8f6) 42%, var(--skeleton-base, #e2e9e5) 62%);
-  background-size: 260% 100%;
-  animation: skeleton-sweep 1.25s ease-in-out infinite;
-}
-.profile-skeleton span:nth-child(2) { height: 92px; }
-.profile-skeleton span:nth-child(3) { width: 46%; height: 36px; }
 .settings-inline-skeleton { display: grid; gap: 7px; padding: 4px 0 8px; }
 .settings-inline-skeleton span {
   display: block;

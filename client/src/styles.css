@@ -555,19 +555,7 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 .menu-confirm{display:grid;gap:2px;margin-top:2px;padding:7px 8px;border-radius:11px;background:var(--surface-2)}
 .menu-confirm button{padding:7px 3px;font-size:12px}
 .text-muted{color:var(--muted)}
-.profile-sheet,.rooms-sheet{width:min(100%,470px)}
-.profile-facts{display:grid;gap:7px;margin:16px 0 20px;padding:13px 14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line)}
-.profile-facts p{display:flex;justify-content:space-between;align-items:center;gap:14px;margin:0;font-size:11px}
-.profile-facts span{color:var(--muted);font-weight:700;letter-spacing:.03em;text-transform:uppercase;font-size:9px}
-.profile-facts code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--ink);overflow-wrap:anywhere;text-align:right}
-.profile-facts strong{font-size:11px;color:var(--ink);text-align:right}
-.profile-note-form{display:grid;gap:12px}
-.profile-note-form .field{display:grid;gap:7px}
-.profile-note-form .field>span{font-size:11px;font-weight:700;color:var(--ink)}
-.profile-note-form .input{width:100%;min-height:78px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;outline:none;background:var(--surface-2);color:var(--ink);font:inherit;font-size:13px;resize:vertical;transition:border-color .18s ease,box-shadow .18s ease}
-.profile-note-form .input:focus{border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 14%,transparent)}
-.profile-note-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.profile-note-actions small{color:var(--teal);font-size:11px}
+.rooms-sheet{width:min(100%,470px)}
 .rooms-sheet-list{display:grid;gap:9px;margin:0 0 14px;padding:0;list-style:none}
 .rooms-sheet-list li{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;border:1px solid var(--line);border-radius:14px;background:var(--surface-2)}
 .rooms-sheet-list li>div:first-child{display:grid;gap:2px;min-width:0}
@@ -581,15 +569,15 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
  * the sheet-specific rules below only supply colour and spacing overrides.
  */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 13px;border:1px solid transparent;border-radius:10px;background:var(--surface-2);color:var(--ink);font:inherit;font-size:12px;font-weight:700;line-height:1.2;cursor:pointer;transition:background .18s ease,color .18s ease,border-color .18s ease}
-.rooms-sheet .btn,.profile-sheet .btn,.profile-note-actions .btn{padding:8px 13px;border-radius:10px;font-size:11px;font-weight:700;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);transition:background .18s ease,color .18s ease}
-.rooms-sheet .btn:hover,.profile-sheet .btn:hover{background:color-mix(in srgb,var(--teal) 12%,var(--surface));color:var(--teal)}
+.rooms-sheet .btn{padding:8px 13px;border-radius:10px;font-size:11px;font-weight:700;background:var(--surface-2);border:1px solid var(--line);color:var(--ink);transition:background .18s ease,color .18s ease}
+.rooms-sheet .btn:hover{background:color-mix(in srgb,var(--teal) 12%,var(--surface));color:var(--teal)}
 .btn-primary{background:var(--teal);color:#fff;border-color:var(--teal)}
 .btn-primary:hover:not(:disabled){background:var(--accent-hover);color:var(--accent-ink);border-color:var(--accent-hover)}
 .btn:disabled{opacity:.55;cursor:wait}
 [data-theme='dark'] .menu-confirm{background:#173b36}
 [data-theme='dark'] .menu-danger{color:#ffb3b6!important}
 [data-theme='dark'] .rooms-sheet-list li{background:var(--surface-2);border-color:var(--line)}
-@media(max-width:430px){.profile-sheet,.rooms-sheet{padding:24px 18px}.rooms-sheet-list li{align-items:flex-start;flex-direction:column;gap:9px}.rooms-sheet-actions{width:100%;justify-content:flex-end}}
+@media(max-width:430px){.rooms-sheet{padding:24px 18px}.rooms-sheet-list li{align-items:flex-start;flex-direction:column;gap:9px}.rooms-sheet-actions{width:100%;justify-content:flex-end}}
 
 /* P2 chat settings: per-guest block list, palettes, clear and delete. */
 .settings-group-title{display:flex;align-items:center;gap:7px;margin:22px 0 10px;font:700 12px var(--serif);letter-spacing:-.02em;color:var(--ink)}
@@ -674,10 +662,7 @@ html[data-theme='dark'],html[data-theme='dark'] body,html[data-theme='dark'] .ap
 [class*='chat-theme-'] .preview-body{background:color-mix(in srgb,var(--room-hue) 7%,var(--surface))}
 
 /* ---------- P3 profiles, pictures and sender avatars ---------- */
-.avatar img,.profile-avatar img,.bubble-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
-.profile-avatar{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;background:var(--teal);overflow:hidden;flex:0 0 auto}
-.profile-avatar-row{display:flex;gap:14px;align-items:center;margin:14px 0}
-.profile-avatar-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.avatar img,.bubble-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block}
 .file-input-hidden{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .bubble-avatar{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:700;color:#fff;background:var(--teal-deep);overflow:hidden;flex:0 0 auto;margin-right:6px}
 .bubble-author{display:flex;align-items:center;gap:0}

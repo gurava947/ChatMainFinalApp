@@ -10,8 +10,8 @@ import {
   authorizeRoom, blockGuest, CHAT_THEMES, checkRoomAccess, clearCallHistory, clearChatForMe, clearGuest, connectFeed, connectRoom, deleteChatForMe,
   deleteMessagesForMe, deleteStatus, fetchCallHistory, fetchChatSettings, fetchMyProfile, fetchProfiles,
   fetchRoomMessages, fetchRoomPresence, fetchRoomRoster, fetchStatuses, fetchStatusViewers, forgetRoom, markStatusSeen, normalizeRoomName, postMediaStatus,
-  postTextStatus, readGuest, readRooms, removeAvatar, resolveGuest, roomSummary, rotateRoomInvite, saveGuest, saveNote, saveRoomTheme,
-  saveRooms, sessionHeaders, unblockGuest, uploadAvatar, uploadStatusMedia,
+  postTextStatus, readGuest, readRooms, resolveGuest, roomSummary, rotateRoomInvite, saveGuest, saveRoomTheme,
+  saveRooms, sessionHeaders, unblockGuest, uploadStatusMedia,
 } from './roomChat'
 import {
   buildContactContent, buildEventContent, buildPollContent, contactLinks, icsForEvent, pollOutcome,
@@ -668,140 +668,27 @@ function ThemeSwitch({ dark, onChange }) {
   )
 }
 
-/** The About note is stored on the server under the guest session, so it survives a reload. */
-function ProfileSheet({ guest, profile, onProfileChange, onClose }) {
-  const sheetRef = useRef(null)
-  const [note, setNote] = useState(profile ? profile.note : null)
-  const [avatar, setAvatar] = useState(profile ? profile.avatar : null)
-  const [draft, setDraft] = useState(profile?.note?.text || '')
-  const [status, setStatus] = useState('')
-  const [loadingProfile, setLoadingProfile] = useState(!profile)
-  const [saving, setSaving] = useState(false)
-  const [pictureBusy, setPictureBusy] = useState(false)
-  const fileInputRef = useRef(null)
-  useDialogTrap(sheetRef, { onClose })
-
-  useEffect(() => {
-    if (profile) {
-      setNote(profile.note)
-      setAvatar(profile.avatar)
-      setDraft(profile.note.text)
-      setStatus('')
-      setLoadingProfile(false)
-      return
-    }
-    let active = true
-    fetchMyProfile(guest)
-      .then((loaded) => {
-        if (!active) return
-        setNote(loaded.note)
-        setAvatar(loaded.avatar)
-        setDraft(loaded.note.text)
-        setLoadingProfile(false)
-        onProfileChange?.(loaded)
-      })
-      .catch((error) => {
-        if (!active) return
-        setLoadingProfile(false)
-        setStatus(error.message)
-      })
-    return () => { active = false }
-  }, [profile, guest, onProfileChange])
-
-  const submit = async (event) => {
-    event.preventDefault()
-    setSaving(true)
-    setStatus('')
-    try {
-      const saved = await saveNote(guest, draft.trim())
-      setNote(saved)
-      setDraft(saved.text)
-      setStatus('Saved.')
-    } catch (error) {
-      setStatus(error.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const pickPicture = async (event) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    setPictureBusy(true)
-    setStatus('')
-    try {
-      const uploaded = await uploadAvatar(guest, file)
-      setAvatar(uploaded)
-      onProfileChange?.({ userId: guest.userId, displayName: guest.displayName, note, avatar: uploaded })
-      setStatus('Profile picture updated.')
-    } catch (error) {
-      setStatus(error.message)
-    } finally {
-      setPictureBusy(false)
-    }
-  }
-
-  const dropPicture = async () => {
-    setPictureBusy(true)
-    setStatus('')
-    try {
-      await removeAvatar(guest)
-      setAvatar(null)
-      onProfileChange?.({ userId: guest.userId, displayName: guest.displayName, note, avatar: null })
-      setStatus('Profile picture removed.')
-    } catch (error) {
-      setStatus(error.message)
-    } finally {
-      setPictureBusy(false)
-    }
-  }
-
-  return createPortal(
-    <div className="room-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <section ref={sheetRef} className="room-modal profile-sheet" role="dialog" aria-modal="true" aria-label="My profile">
-        <button className="room-modal-close" type="button" aria-label="Close profile" onClick={onClose}><X size={18} /></button>
-        <p className="eyebrow">MY PROFILE</p>
-        <h2>{guest.displayName}</h2>
-        <div className="profile-avatar-row">
-          <AvatarFace className="profile-avatar" src={avatar?.url} initials={initialsOf(guest.displayName)} />
-          <div className="profile-avatar-actions">
-            <input ref={fileInputRef} className="file-input-hidden" tabIndex={-1} type="file" accept="image/*" aria-label="Choose a profile picture" onChange={pickPicture} disabled={pictureBusy} />
-            <button className="btn" type="button" disabled={pictureBusy} onClick={() => fileInputRef.current?.click()}><Image size={15} /> {avatar ? 'Change picture' : 'Add picture'}</button>
-            {avatar ? <button className="btn btn-danger" type="button" disabled={pictureBusy} onClick={dropPicture}><Trash2 size={15} /> Remove</button> : null}
-            <small role="status">{pictureBusy ? 'Uploading…' : ''}</small>
-          </div>
-        </div>
-        <div className="profile-facts">
-          <p><span>Guest id</span><code>{guest.userId}</code></p>
-          {guest.expiresAt ? <p><span>Session ends</span><strong>{new Date(guest.expiresAt).toLocaleString()}</strong></p> : null}
-          {avatar?.updatedAt ? <p><span>Picture</span><strong>{new Date(avatar.updatedAt).toLocaleString()}</strong></p> : null}
-        </div>
-        {loadingProfile ? (
-          <div className="profile-skeleton" role="status" aria-label="Opening your profile">
-            <span /><span /><span />
-          </div>
-        ) : (
-          <form className="profile-note-form" onSubmit={submit}>
-            <label className="field"><span>About <b className="field-count">{draft.length}/500</b></span>
-              <textarea className="input" rows={3} maxLength={500} value={draft} placeholder="Say something about yourself" disabled={note === null} onChange={(event) => setDraft(event.target.value)} />
-            </label>
-            <div className="profile-note-actions">
-              <button className="btn btn-primary" type="submit" disabled={saving || note === null}>{saving ? 'Saving…' : 'Save about'}</button>
-              <small role="status">{status}</small>
-            </div>
-            {note?.updatedAt ? <small className="text-muted">Updated {new Date(note.updatedAt).toLocaleString()}</small> : null}
-          </form>
-        )}
-      </section>
-    </div>,
-    document.body,
+/**
+ * The header carries the brand and the theme switch. Every account surface -
+ * profile, rooms, session, sign out - lives in Settings, so the phone header
+ * has no entry point that competes with the bottom navigation. The avatar used
+ * to open a profile sheet here; that duplicated Settings and sat too close to
+ * the theme switch on small screens.
+ */
+function AppHeader({ dark, onThemeChange }) {
+  return (
+    <header className="app-header">
+      <div className="brand-lockup"><BrandMark /><div><strong>INchat</strong></div><span className="india-flag" aria-label="India">🇮🇳</span></div>
+      <div className="header-actions">
+        <ThemeSwitch dark={dark} onChange={onThemeChange} />
+      </div>
+    </header>
   )
 }
 
 /**
- * A profile picture is only ever shown when the server has one; without it the
- * app falls back to initials rather than inventing an image.
+ * A sender picture is only ever shown when the server has one; without it the
+ * bubble falls back to initials rather than inventing an image.
  */
 function AvatarFace({ src, initials, className }) {
   return <div className={className}>{src ? <img src={src} alt="" /> : initials}</div>
@@ -809,31 +696,6 @@ function AvatarFace({ src, initials, className }) {
 
 function initialsOf(name, fallback = 'G') {
   return name?.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || fallback
-}
-
-/**
- * The header is a brand, the theme switch and the signed-in face. Everything
- * else - rooms, profile, session, sign out - lives in Settings, so the phone
- * header has no hidden menu to discover. The avatar still opens the profile
- * sheet directly, because editing your own name should not be three taps deep.
- */
-function AppHeader({ dark, onThemeChange, guest, profile, onProfileChange }) {
-  const [profileOpen, setProfileOpen] = useState(false)
-  useBackDismiss(profileOpen, () => setProfileOpen(false))
-  return (
-    <header className="app-header">
-      <div className="brand-lockup"><BrandMark /><div><strong>INchat</strong></div><span className="india-flag" aria-label="India">🇮🇳</span></div>
-      <div className="header-actions">
-        <ThemeSwitch dark={dark} onChange={onThemeChange} />
-        {guest && (
-          <button type="button" className="header-account" aria-label={`Open ${guest.displayName || 'guest'} profile`} title="My profile" onClick={() => setProfileOpen(true)}>
-            <AvatarFace className="header-avatar" src={profile?.avatar?.url} initials={initialsOf(guest.displayName)} />
-          </button>
-        )}
-      </div>
-      {profileOpen && guest && <ProfileSheet guest={guest} profile={profile} onProfileChange={onProfileChange} onClose={() => setProfileOpen(false)} />}
-    </header>
-  )
 }
 
 /**
@@ -3431,7 +3293,7 @@ function App() {
     </Routes>
   )
 
-  return <div className={shellClass}><AppHeader guest={guest} profile={profile} onProfileChange={setProfile} dark={dark} onThemeChange={(next) => setDark(next === 'dark')} />{routes}<BottomNavigation /></div>
+  return <div className={shellClass}><AppHeader dark={dark} onThemeChange={(next) => setDark(next === 'dark')} />{routes}<BottomNavigation /></div>
 }
 
 export default App
