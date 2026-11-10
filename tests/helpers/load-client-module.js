@@ -55,6 +55,12 @@ const CALL_HISTORY_EXPORTS = [
   'callMoment', 'callDurationLabel', 'describeCall', 'groupCallsByDay', 'canCallBack',
 ];
 
+/** Boot-time ICE config: freshness, background refresh and request dedupe. */
+const ICE_CACHE_EXPORTS = [
+  'ICE_FALLBACK', 'ICE_REFRESH_AFTER_MS', 'ICE_USABLE_FOR_MS',
+  'readIceServers', 'primeIceConfig', 'resetIceCache',
+];
+
 /** The 24-hour status feed (P8): palette, countdown, ordering and viewer copy. */
 const STATUS_FEED_EXPORTS = [
   'STATUS_PALETTE', 'STATUS_TEXT_MAX', 'timeLeftLabel', 'isLive', 'hasUnseen', 'pickColor',
@@ -160,6 +166,10 @@ function loadCallHistory() {
   return loadClientModule('callHistory.js', CALL_HISTORY_EXPORTS);
 }
 
+function loadIceCache() {
+  return loadClientModule('iceCache.js', ICE_CACHE_EXPORTS);
+}
+
 function loadStatusFeed() {
   return loadClientModule('statusFeed.js', STATUS_FEED_EXPORTS);
 }
@@ -186,8 +196,8 @@ function loadPreferences() {
 
 module.exports = {
   loadRoomChat, loadRichCards, loadA11y, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
+  loadCallHistory, loadIceCache, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, A11Y_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
-  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
+  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, ICE_CACHE_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
   LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS, PREFERENCE_EXPORTS,
 };

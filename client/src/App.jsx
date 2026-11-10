@@ -43,6 +43,7 @@ import {
   storeCalls, storeMedia, storeMessages, storeProfiles,
 } from './localStore'
 import useRoomCalls from './useRoomCalls'
+import { primeIceConfig } from './iceCache'
 
 const navItems = [
   { to: '/', label: 'Chats', icon: MessageCircle, end: true },
@@ -3124,6 +3125,20 @@ function App() {
       })
       .catch(() => {})
     return () => { active = false }
+  }, [guest?.userId])
+
+  /**
+   * Warm the ICE config as soon as the app knows the guest, and again when the
+   * tab comes back, so a call never has to fetch it on the click path.
+   */
+  useEffect(() => {
+    if (!guest?.userId) return undefined
+    primeIceConfig(guest)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') primeIceConfig(guest)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
   }, [guest?.userId])
 
   /**

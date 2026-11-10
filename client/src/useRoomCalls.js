@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-
-const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }]
+import { ICE_FALLBACK, primeIceConfig, readIceServers } from './iceCache'
 
 function sendAck(socket, event, payload) {
   return new Promise((resolve, reject) => {
@@ -32,6 +31,7 @@ export default function useRoomCalls(socket, roomId, session) {
   const cameraSwitchPendingRef = useRef(false)
   const callBeforeSignalDropRef = useRef(null)
   const signalDroppedRef = useRef(false)
+  const prepareConnectionRef = useRef(null)
   const remoteVideoRef = useRef(null)
   const remoteAudioRef = useRef(null)
   const localVideoRef = useRef(null)
@@ -68,6 +68,7 @@ export default function useRoomCalls(socket, roomId, session) {
 
   useEffect(() => {
     if (!socket) return undefined
+    primeIceConfig(session)
 
     const refreshPeers = (snapshot) => {
       const next = (snapshot?.users || [])
@@ -86,6 +87,7 @@ export default function useRoomCalls(socket, roomId, session) {
 
     const onIncoming = (signal) => {
       if (signal.room !== roomId || !signal.fromSocketId || !signal.callId) return
+      primeIceConfig(session)
       if (callRef.current) {
         sendReject(signal)
         return
@@ -103,25 +105,11 @@ export default function useRoomCalls(socket, roomId, session) {
       })
     }
 
-    const createPeerConnection = async (active) => {
-      let iceServers = ICE_SERVERS
-      if (session?.userId) {
-        const controller = new AbortController()
-        const timeout = window.setTimeout(() => controller.abort(), 2500)
-        try {
-          const response = await fetch('/api/rtc-config', {
-            headers: { 'X-Session-Id': session.userId },
-            cache: 'no-store',
-            signal: controller.signal
-          })
-          if (response.ok) {
-            const config = await response.json()
-            if (Array.isArray(config.iceServers) && config.iceServers.length) iceServers = config.iceServers
-          }
-        } catch { /* signaling still works with STUN if the optional config endpoint is unavailable */ }
-        finally { window.clearTimeout(timeout) }
-      }
-      const connection = new RTCPeerConnection({ iceServers })
+    const createPeerConnection = (active) => {
+      // Boot primed this cache, so negotiating never waits on /api/rtc-config.
+      const iceServers = readIceServers(session) || ICE_FALLBACK
+      primeIceConfig(session)
+      const connection = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 2 })
       active.localStream?.getTracks().forEach((track) => connection.addTrack(track, active.localStream))
       connection.onicecandidate = (event) => {
         if (!event.candidate) return
@@ -167,6 +155,7 @@ export default function useRoomCalls(socket, roomId, session) {
       peerConnectionRef.current = connection
       return connection
     }
+    prepareConnectionRef.current = createPeerConnection
 
     const flushIce = async (connection) => {
       const queued = pendingIceRef.current.splice(0)
@@ -180,7 +169,7 @@ export default function useRoomCalls(socket, roomId, session) {
       if (!active || active.direction !== 'outgoing' || active.callId !== signal.callId || active.peerSocketId !== signal.fromSocketId) return
       try {
         updateCall({ ...active, status: 'connecting' })
-        const connection = await createPeerConnection(active)
+        const connection = createPeerConnection(active)
         const offer = await connection.createOffer()
         await connection.setLocalDescription(offer)
         socket.emit('call:offer', {
@@ -198,7 +187,7 @@ export default function useRoomCalls(socket, roomId, session) {
       const active = callRef.current
       if (!active || active.direction !== 'incoming' || active.callId !== signal.callId || active.peerSocketId !== signal.fromSocketId) return
       try {
-        const connection = peerConnectionRef.current || await createPeerConnection(active)
+        const connection = peerConnectionRef.current || createPeerConnection(active)
         await connection.setRemoteDescription(new RTCSessionDescription(signal.description))
         await flushIce(connection)
         const answer = await connection.createAnswer()
@@ -302,6 +291,7 @@ export default function useRoomCalls(socket, roomId, session) {
       socket.off('call:ice', onIce)
       socket.off('call:declined', onDeclined)
       socket.off('call:end', onEnded)
+      prepareConnectionRef.current = null
       cleanupLocal()
     }
     // A room socket is created for one guest and one room; the refs keep event handlers current.
@@ -368,6 +358,7 @@ export default function useRoomCalls(socket, roomId, session) {
   }, [call?.callId, call?.status, socket])
 
   const openPicker = (mode) => {
+    primeIceConfig(session)
     setFeedback('')
     setPickerMode(mode)
   }
@@ -406,6 +397,12 @@ export default function useRoomCalls(socket, roomId, session) {
         callId: active.callId,
         mode,
       })
+      // Gathering starts while the other guest is still ringing, so the offer
+      // is ready the moment they accept. A fast auto-answer may already have
+      // built the connection; a call cancelled during the invite must not
+      // leave one behind.
+      const latest = callRef.current
+      if (latest?.callId === active.callId && !peerConnectionRef.current) prepareConnectionRef.current?.(active)
     } catch (error) {
       const current = callRef.current
       if (current?.direction === 'outgoing') cleanupLocal()

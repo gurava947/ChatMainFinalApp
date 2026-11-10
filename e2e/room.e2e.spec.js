@@ -37,11 +37,15 @@ async function sendMessage(page, text) {
   await composer.press('Enter');
 }
 
-async function pairTwoGuests(browser, label) {
+async function pairTwoGuests(browser, label, onPageCreated) {
   const ownerContext = await browser.newContext(CONTEXT_OPTIONS);
   const guestContext = await browser.newContext(CONTEXT_OPTIONS);
   const owner = await ownerContext.newPage();
   const guest = await guestContext.newPage();
+  if (onPageCreated) {
+    onPageCreated(owner);
+    onPageCreated(guest);
+  }
   const room = roomName(label);
 
   await owner.goto('/');
@@ -56,6 +60,18 @@ async function pairTwoGuests(browser, label) {
 
 async function expectBubble(page, text) {
   await expect(page.locator('.bubble-text').filter({ hasText: text })).toBeVisible();
+}
+
+/** The ICE config must be warmed once at boot and never again on the call path. */
+function trackRtcConfig(page) {
+  const seen = { requests: 0, responses: 0 };
+  page.on('request', (request) => {
+    if (request.url().includes('/api/rtc-config')) seen.requests += 1;
+  });
+  page.on('response', (response) => {
+    if (response.url().includes('/api/rtc-config')) seen.responses += 1;
+  });
+  return seen;
 }
 
 test('two guests pair, exchange messages, and keep history on reload', async ({ browser }) => {
@@ -81,9 +97,17 @@ test('two guests pair, exchange messages, and keep history on reload', async ({ 
 });
 
 test('one seat can call the other and both reach connected audio', async ({ browser }) => {
-  const { ownerContext, guestContext, owner, guest } = await pairTwoGuests(browser, 'call');
+  const tracked = [];
+  const { ownerContext, guestContext, owner, guest } = await pairTwoGuests(browser, 'call', (page) => tracked.push(trackRtcConfig(page)));
+  const [ownerConfig, guestConfig] = tracked;
 
   try {
+    // Each page warms the config once while joining; nothing after this should
+    // touch the endpoint, because starting a call reads the cache.
+    await expect.poll(() => ownerConfig.responses, { timeout: 10_000 }).toBe(1);
+    await expect.poll(() => guestConfig.responses, { timeout: 10_000 }).toBe(1);
+    const bootRequests = { owner: ownerConfig.requests, guest: guestConfig.requests };
+
     await guest.getByRole('button', { name: 'Start audio call' }).click();
     const picker = guest.getByRole('dialog', { name: 'Choose someone for an audio call' });
     await picker.getByRole('button', { name: /E2E Owner/ }).click();
@@ -96,6 +120,11 @@ test('one seat can call the other and both reach connected audio', async ({ brow
     // sides have exchanged SDP and ICE, so it covers the whole media path.
     await expect(owner.getByText('Audio connected')).toBeVisible({ timeout: 30_000 });
     await expect(guest.getByText('Audio connected')).toBeVisible({ timeout: 30_000 });
+
+    expect(ownerConfig.requests).toBe(bootRequests.owner);
+    expect(guestConfig.requests).toBe(bootRequests.guest);
+    expect(ownerConfig.requests).toBe(1);
+    expect(guestConfig.requests).toBe(1);
 
     const outgoing = guest.getByRole('dialog', { name: 'audio call with E2E Owner' });
     await outgoing.getByRole('button', { name: 'End call' }).last().click();
