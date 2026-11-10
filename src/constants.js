@@ -98,6 +98,12 @@ const PROFILE_LOOKUP_MAX = 60;
 const CALL_RECORD_TTL_SECONDS = 30 * 24 * 3600;
 /** Both ends share one record, so a guest's list is capped, not paginated. */
 const CALL_HISTORY_MAX = 50;
+/**
+ * A signal mailbox only has to outlive the reconnect that missed the packet.
+ * Sixty seconds covers the recovery ladder without turning Redis into a log.
+ */
+const SIGNAL_MAILBOX_TTL_SECONDS = 60;
+const SIGNAL_MAILBOX_MAX_ENTRIES = 128;
 
 /** A status is a day old and gone; the TTL is the whole product. */
 const STATUS_TTL_SECONDS = 24 * 60 * 60;
@@ -188,6 +194,8 @@ module.exports = {
   PROFILE_LOOKUP_MAX,
   CALL_RECORD_TTL_SECONDS,
   CALL_HISTORY_MAX,
+  SIGNAL_MAILBOX_TTL_SECONDS,
+  SIGNAL_MAILBOX_MAX_ENTRIES,
   STATUS_TTL_SECONDS,
   STATUS_MAX_PER_USER,
   STATUS_TEXT_MAX_CHARS,
@@ -214,6 +222,8 @@ module.exports = {
   avatarKey: (userId) => `chat:avatar:${userId}`,
   callRecordKey: (callId) => `chat:call:record:${callId}`,
   callUserKey: (userId) => `chat:call:user:${userId}`,
+  /** The recipient is a user id, not a socket id: a reconnect changes the socket. */
+  signalMailboxKey: (callId, userId) => `chat:call:signal:${callId}:${userId}`,
   statusKey: (statusId) => `chat:status:${statusId}`,
   statusUserKey: (userId) => `chat:status:user:${userId}`,
   statusActiveKey: () => 'chat:status:active',

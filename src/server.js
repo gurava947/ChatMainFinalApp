@@ -37,6 +37,7 @@ function createRuntime(options = {}) {
 
   const io = new Server(server, {
     path: '/socket.io',
+    transports: ['polling', 'websocket'],
     cors: {
       origin: env.corsOrigins.includes('*') ? true : env.corsOrigins,
       credentials: !env.corsOrigins.includes('*'),

@@ -121,7 +121,7 @@ function registerChatEvents(io, deps) {
       ? setupJoin().catch((err) => emitError({ message: 'could not join room', reason: err.message }))
       : Promise.resolve();
 
-    registerCallEvents(socket, { io, chat, getJoined: () => joined, calls, store, env });
+    registerCallEvents(socket, { io, chat, getJoined: () => joined, calls, store, env, logger });
 
     socket.on(SOCKET_EVENTS.ROOM_JOIN, async (payload, ack) => {
       try {

@@ -227,3 +227,103 @@ describe('call history', () => {
     expect(anonymous.status).toBe(401);
   });
 });
+
+describe('signal mailbox', () => {
+  let room = 0;
+  const nextRoom = () => `p5-mailbox-${(room += 1)}`;
+  const offer = { type: 'offer', sdp: 'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n' };
+  const answer = { type: 'answer', sdp: 'v=0\r\no=- 2 2 IN IP4 127.0.0.1\r\n' };
+  const ice = { candidate: 'candidate:1 1 udp 100 10.0.0.1 50000 typ host', sdpMid: '0', sdpMLineIndex: 0 };
+
+  test('resume replays the offer to the callee and the answer to the caller', async () => {
+    const space = nextRoom();
+    const { caller, callee, callerId, calleeId } = await pair(space);
+    const callId = crypto.randomUUID();
+
+    expect(await emitWithAck(caller, 'call:invite', { targetSocketId: callee.id, callId, mode: 'audio' })).toMatchObject({ ok: true });
+    expect(await emitWithAck(callee, 'call:accept', { targetSocketId: caller.id, callId })).toMatchObject({ ok: true });
+    expect(await emitWithAck(caller, 'call:offer', { targetSocketId: callee.id, callId, description: offer })).toMatchObject({ ok: true });
+    expect(await emitWithAck(callee, 'call:answer', { targetSocketId: caller.id, callId, description: answer })).toMatchObject({ ok: true });
+    expect(await emitWithAck(caller, 'call:ice', { targetSocketId: callee.id, callId, candidate: ice })).toMatchObject({ ok: true });
+
+    expect(await emitWithAck(callee, 'call:resume', { callId })).toMatchObject({ ok: true, replayed: true });
+    const calleeBox = await waitFor(callee, 'call:mailbox', (p) => p.callId === callId);
+    expect(calleeBox).toMatchObject({ fromUserId: callerId, fromSocketId: caller.id, description: offer });
+    expect(calleeBox.candidates.length).toBeGreaterThanOrEqual(1);
+
+    expect(await emitWithAck(caller, 'call:resume', { callId })).toMatchObject({ ok: true, replayed: true });
+    const callerBox = await waitFor(caller, 'call:mailbox', (p) => p.callId === callId);
+    expect(callerBox).toMatchObject({ fromUserId: calleeId, fromSocketId: callee.id, description: answer });
+
+    caller.close();
+    callee.close();
+  });
+
+  test('a ring with no SDP resumes empty', async () => {
+    const space = nextRoom();
+    const { caller, callee, calleeId } = await pair(space);
+    const callId = crypto.randomUUID();
+
+    expect(await emitWithAck(caller, 'call:invite', { targetSocketId: callee.id, callId, mode: 'audio' })).toMatchObject({ ok: true });
+    expect(await emitWithAck(callee, 'call:resume', { callId })).toMatchObject({ ok: true, replayed: false });
+    expect((await ctx.store.readSignalMailbox(callId, calleeId)).count).toBe(0);
+
+    caller.close();
+    callee.close();
+  });
+
+  test('ending clears both mailboxes and refuses a later resume', async () => {
+    const space = nextRoom();
+    const { caller, callee, callerId, calleeId } = await pair(space);
+    const callId = crypto.randomUUID();
+
+    expect(await emitWithAck(caller, 'call:invite', { targetSocketId: callee.id, callId, mode: 'audio' })).toMatchObject({ ok: true });
+    expect(await emitWithAck(callee, 'call:accept', { targetSocketId: caller.id, callId })).toMatchObject({ ok: true });
+    expect(await emitWithAck(caller, 'call:offer', { targetSocketId: callee.id, callId, description: offer })).toMatchObject({ ok: true });
+    expect(await emitWithAck(caller, 'call:end', { targetSocketId: callee.id, callId })).toMatchObject({ ok: true });
+
+    expect((await ctx.store.readSignalMailbox(callId, callerId)).count).toBe(0);
+    expect((await ctx.store.readSignalMailbox(callId, calleeId)).count).toBe(0);
+    expect(await emitWithAck(callee, 'call:resume', { callId })).toMatchObject({ ok: false, error: 'call is no longer active' });
+
+    caller.close();
+    callee.close();
+  });
+
+  test('a malformed or foreign resume is rejected', async () => {
+    const space = nextRoom();
+    const { caller, callee } = await pair(space);
+    const callId = crypto.randomUUID();
+    expect(await emitWithAck(caller, 'call:invite', { targetSocketId: callee.id, callId, mode: 'audio' })).toMatchObject({ ok: true });
+
+    expect(await emitWithAck(callee, 'call:resume', { callId: 'not-a-uuid' })).toMatchObject({ ok: false, error: 'invalid call id' });
+    const stranger = await emitWithAck(callee, 'call:resume', { callId: '11111111-1111-4111-8111-111111111111' });
+    expect(stranger).toMatchObject({ ok: false, error: 'call is no longer active' });
+    expect(await ctx.store.getCall('11111111-1111-4111-8111-111111111111')).toBeNull();
+
+    caller.close();
+    callee.close();
+  });
+
+  test('call path stats surface through the metrics endpoint', async () => {
+    const space = nextRoom();
+    const { caller, callee } = await pair(space);
+    const callId = crypto.randomUUID();
+
+    expect(await emitWithAck(caller, 'call:invite', { targetSocketId: callee.id, callId, mode: 'audio' })).toMatchObject({ ok: true });
+    expect(await emitWithAck(callee, 'call:accept', { targetSocketId: caller.id, callId })).toMatchObject({ ok: true });
+    expect(await emitWithAck(caller, 'call:stats', { callId, outcome: 'connected', relayed: false })).toMatchObject({ ok: true });
+    expect(await emitWithAck(callee, 'call:stats', { callId, outcome: 'connected', relayed: true })).toMatchObject({ ok: true });
+
+    const res = await request(ctx.app).get('/metrics');
+    expect(res.status).toBe(200);
+    expect(res.text).toMatch(/chat_call_setups_total\{[^}]*outcome="connected"[^}]*transport="websocket"[^}]*\}/);
+    expect(res.text).toMatch(/chat_call_media_path_total\{path="direct"\}/);
+    expect(res.text).toMatch(/chat_call_media_path_total\{path="relay"\}/);
+    expect(res.text).toMatch(/chat_signal_mailbox_total\{op="write"\}/);
+
+    expect(await emitWithAck(caller, 'call:end', { targetSocketId: callee.id, callId })).toMatchObject({ ok: true });
+    caller.close();
+    callee.close();
+  });
+});

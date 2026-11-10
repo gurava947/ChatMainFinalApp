@@ -254,3 +254,37 @@ test('a file sent without a call still lands as a server attachment', async ({ b
     await guestContext.close();
   }
 });
+
+test('a signaling drop mid-call recovers through the mailbox and keeps one history row', async ({ browser }) => {
+  const { ownerContext, guestContext, owner, guest, room } = await pairTwoGuests(browser, 'mailbox-resume');
+  const pageErrors = [];
+  for (const page of [owner, guest]) {
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+  }
+
+  try {
+    await connectAudioCall(owner, guest);
+
+    await guestContext.setOffline(true);
+    await guest.waitForTimeout(2000);
+    await guestContext.setOffline(false);
+
+    await expect(owner.getByText('Audio connected')).toBeVisible({ timeout: 45_000 });
+    await expect(guest.getByText('Audio connected')).toBeVisible({ timeout: 45_000 });
+
+    const outgoing = guest.getByRole('dialog', { name: 'audio call with E2E Owner' });
+    await outgoing.getByRole('button', { name: 'End call' }).last().click();
+    await expect(owner.getByRole('status').filter({ hasText: 'Call ended.' })).toBeVisible();
+
+    const res = await owner.request.get('/api/calls');
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    const rows = body.calls.filter((entry) => entry.room === room);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'ended', mode: 'audio' });
+    expect(pageErrors).toEqual([]);
+  } finally {
+    await ownerContext.close();
+    await guestContext.close();
+  }
+});

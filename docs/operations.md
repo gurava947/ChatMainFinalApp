@@ -86,6 +86,10 @@ keeps the test suite and local scraping simple.
 | `chat_socket_connections_total` | counter | - |
 | `chat_active_sockets` | gauge | - |
 | `chat_media_uploads_total` | counter | - |
+| `chat_call_setups_total` | counter | `outcome`, `transport` |
+| `chat_call_media_path_total` | counter | `path` (`relay`, `direct`, `unknown`) |
+| `chat_call_resume_total` | counter | `outcome` (`replayed`, `empty`, `rejected`) |
+| `chat_signal_mailbox_total` | counter | `op` (`write`, `read`, `clear`, `error`) |
 
 `route` is the Express route template (`/api/rooms/:room/messages`), never the
 concrete id, so label cardinality stays bounded by the route table. Unmatched
@@ -108,6 +112,10 @@ scrape_configs:
 Scale on `chat_active_sockets` (or connections per pod) rather than CPU if the
 cost you are tracking is connection count. Counter/gauge values are
 per-process; aggregate across replicas in the query.
+
+The call-path counters and the free-tier alarm thresholds live in
+[architecture.md](architecture.md). `chat_call_media_path_total` is the TURN
+relay ratio; `chat_signal_mailbox_total{op="read"}` counts reconnect retries.
 
 ## Health
 

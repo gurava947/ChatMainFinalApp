@@ -146,6 +146,16 @@ const callSignalSchema = z.object({
 /** Only an invite carries a mode, and only these two modes exist. */
 const callInviteSchema = callSignalSchema.extend({ mode: z.enum(['audio', 'video'], 'invalid call mode') });
 
+/** A resume names only the call: the mailbox is keyed by the asking user. */
+const callResumeSchema = z.object({ callId: z.string().uuid('invalid call id') });
+
+/** One report per call: the client samples the selected candidate pair once. */
+const callStatsSchema = z.object({
+  callId: z.string().uuid('invalid call id'),
+  outcome: z.enum(['connected', 'failed'], 'invalid call outcome'),
+  relayed: z.boolean().nullable()
+});
+
 /**
  * A status is one card: a colour and at most 200 characters, or media that was
  * already uploaded. The palette is an allowlist because the value is painted
@@ -351,6 +361,8 @@ module.exports = {
   roomJoinPayloadSchema,
   callSignalSchema,
   callInviteSchema,
+  callResumeSchema,
+  callStatsSchema,
   statusSchema,
   sendPayloadSchema,
   postMessageSchema,

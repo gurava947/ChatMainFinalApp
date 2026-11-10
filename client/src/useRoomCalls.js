@@ -35,6 +35,7 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
   const cameraSwitchRequestRef = useRef(0)
   const cameraSwitchPendingRef = useRef(false)
   const signalDroppedRef = useRef(false)
+  const reportedCallStatsRef = useRef(new Set())
   const prepareConnectionRef = useRef(null)
   const recoveryRef = useRef({ attempt: 0, grace: 0, window: 0, active: false })
   const remoteVideoRef = useRef(null)
@@ -77,6 +78,7 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
     cameraSwitchPendingRef.current = false
     cameraOffRef.current = false
     signalDroppedRef.current = false
+    reportedCallStatsRef.current.clear()
     clearRecovery()
     // A transfer has no receiver once the call is gone; leaving its `done`
     // pending would keep a progress bar alive forever.
@@ -197,8 +199,32 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
     }
     prepareConnectionRef.current = createPeerConnection
 
+    const reportCallStats = (active, outcome) => {
+      if (reportedCallStatsRef.current.has(active.callId)) return
+      reportedCallStatsRef.current.add(active.callId)
+      const connection = peerConnectionRef.current
+      const send = (relayed) => socket.emit('call:stats', { callId: active.callId, outcome, relayed })
+      if (outcome !== 'connected' || !connection?.getStats) {
+        send(null)
+        return
+      }
+      connection.getStats().then((report) => {
+        let pair = null
+        const candidates = new Map()
+        report.forEach((item) => {
+          if (item.type === 'candidate-pair' && item.state === 'succeeded' && (item.nominated || !pair)) pair = item
+          if (item.type === 'local-candidate' || item.type === 'remote-candidate') candidates.set(item.id, item)
+        })
+        if (!pair) return send(null)
+        const local = candidates.get(pair.localCandidateId)
+        const remote = candidates.get(pair.remoteCandidateId)
+        send([local, remote].some((candidate) => candidate?.candidateType === 'relay'))
+      }).catch(() => send(null))
+    }
+
     const markConnected = (active) => {
       clearRecovery()
+      reportCallStats(active, 'connected')
       const current = callRef.current
       if (current?.callId === active.callId) updateCall({ ...current, status: 'active' })
     }
@@ -207,6 +233,7 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
       clearRecovery()
       const current = callRef.current
       if (current?.callId !== active.callId) return
+      reportCallStats(active, 'failed')
       updateCall({ ...current, status: 'failed' })
       setFeedback(message)
     }
@@ -401,6 +428,9 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
       if (!signalDroppedRef.current) return
       signalDroppedRef.current = false
       if (!current || current.status === 'incoming') return
+      if (['calling', 'connecting', 'reconnecting'].includes(current.status)) {
+        socket.emit('call:resume', { callId: current.callId })
+      }
       const peerState = peerConnectionRef.current?.connectionState
       if (peerState === 'disconnected' || peerState === 'failed') {
         scheduleRecovery(current, peerState)
@@ -415,6 +445,22 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
       if (!active || active.direction !== 'outgoing' || active.callId !== signal.callId || active.peerSocketId !== signal.fromSocketId) return
       beginRecovery(active)
     }
+    const onMailbox = async (signal) => {
+      const active = callRef.current
+      if (!active || active.callId !== signal.callId || active.status === 'incoming' || active.status === 'failed') return
+      // The peer may hold a new socket after its own reconnect; the replay
+      // carries the id presence knows now, so later signals aim at the live one.
+      const peerSocketId = signal.fromSocketId || active.peerSocketId
+      updateCall({ ...active, peerSocketId, peerName: signal.fromDisplayName || active.peerName })
+      if (signal.description) {
+        const replay = { ...signal, fromSocketId: peerSocketId }
+        if (active.direction === 'incoming') await onOffer(replay)
+        else await onAnswer(replay)
+      }
+      for (const candidate of signal.candidates || []) {
+        await onIce({ callId: signal.callId, fromSocketId: peerSocketId, candidate })
+      }
+    }
     socket.on('disconnect', onSignalDisconnect)
     socket.on('connect', onSignalReconnect)
     socket.on('presence', refreshPeers)
@@ -424,6 +470,7 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
     socket.on('call:answer', onAnswer)
     socket.on('call:ice', onIce)
     socket.on('call:restart', onRestart)
+    socket.on('call:mailbox', onMailbox)
     socket.on('call:declined', onDeclined)
     socket.on('call:end', onEnded)
 
@@ -437,6 +484,7 @@ export default function useRoomCalls(socket, roomId, session, options = {}) {
       socket.off('call:answer', onAnswer)
       socket.off('call:ice', onIce)
       socket.off('call:restart', onRestart)
+      socket.off('call:mailbox', onMailbox)
       socket.off('call:declined', onDeclined)
       socket.off('call:end', onEnded)
       prepareConnectionRef.current = null

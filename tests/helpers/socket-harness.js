@@ -27,7 +27,8 @@ const RECORDED_EVENTS = [
   'call:answer',
   'call:ice',
   'call:restart',
-  'call:end'
+  'call:end',
+  'call:mailbox'
 ];
 
 /**

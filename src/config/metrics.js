@@ -40,6 +40,34 @@ const mediaUploads = new client.Counter({
   registers: [register]
 });
 
+const callSetups = new client.Counter({
+  name: 'chat_call_setups_total',
+  help: 'Call setup outcomes reported by clients, by signaling transport.',
+  labelNames: ['outcome', 'transport'],
+  registers: [register]
+});
+
+const callMediaPath = new client.Counter({
+  name: 'chat_call_media_path_total',
+  help: 'Connected calls by selected ICE path; relay/(relay+direct) is the TURN ratio.',
+  labelNames: ['path'],
+  registers: [register]
+});
+
+const callResume = new client.Counter({
+  name: 'chat_call_resume_total',
+  help: 'Mailbox resume requests by outcome.',
+  labelNames: ['outcome'],
+  registers: [register]
+});
+
+const signalMailbox = new client.Counter({
+  name: 'chat_signal_mailbox_total',
+  help: 'Signal mailbox operations; repeated reads are reconnect retries.',
+  labelNames: ['op'],
+  registers: [register]
+});
+
 module.exports = {
   register,
   contentType: client.contentType,
@@ -47,5 +75,9 @@ module.exports = {
   messagesSent,
   socketConnections,
   activeSockets,
-  mediaUploads
+  mediaUploads,
+  callSetups,
+  callMediaPath,
+  callResume,
+  signalMailbox
 };

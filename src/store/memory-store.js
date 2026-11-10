@@ -3,7 +3,8 @@
 const { baseMime } = require('../utils/media');
 const { normalizeViewers } = require('../utils/status');
 const { requireOptions } = require('./options');
-const { CALL_HISTORY_MAX, STATUS_MAX_PER_USER } = require('../constants');
+const { CALL_HISTORY_MAX, SIGNAL_MAILBOX_MAX_ENTRIES, SIGNAL_MAILBOX_TTL_SECONDS, STATUS_MAX_PER_USER, signalMailboxKey } = require('../constants');
+const { deriveMailbox } = require('../utils/signal-mailbox');
 
 /** Voters are stored per choice, so the tally is derived rather than mutated. */
 function tallyOf(voters, optionCount) {
@@ -126,6 +127,7 @@ class MemoryStore {
     this.roomRosters = new ExpiringMap(retentionSeconds * 1000);
     this.calls = new Map();
     this.callIndex = new Map();
+    this.signalMailboxes = new Map();
     this.statuses = new Map();
     this.statusIndex = new Map();
   }
@@ -559,6 +561,38 @@ class MemoryStore {
       if (!stillListed) this.calls.delete(id);
     }
     return ids.length;
+  }
+
+  async appendSignal(callId, userId, entry) {
+    const key = signalMailboxKey(callId, userId);
+    const box = this.signalMailboxes.get(key);
+    const expired = !box || box.expiresAt <= Date.now();
+    const entries = entry.kind === 'description' || expired ? [] : [...box.entries];
+    entries.push(entry);
+    this.signalMailboxes.set(key, {
+      entries: entries.slice(-SIGNAL_MAILBOX_MAX_ENTRIES),
+      expiresAt: Date.now() + SIGNAL_MAILBOX_TTL_SECONDS * 1000
+    });
+    return entry;
+  }
+
+  async readSignalMailbox(callId, userId) {
+    const key = signalMailboxKey(callId, userId);
+    const box = this.signalMailboxes.get(key);
+    if (!box) return deriveMailbox([]);
+    if (box.expiresAt <= Date.now()) {
+      this.signalMailboxes.delete(key);
+      return deriveMailbox([]);
+    }
+    return deriveMailbox(box.entries);
+  }
+
+  async clearSignalMailbox(callId, userIds) {
+    let removed = 0;
+    for (const userId of new Set(userIds)) {
+      if (this.signalMailboxes.delete(signalMailboxKey(callId, userId))) removed += 1;
+    }
+    return removed;
   }
 
   /* ------------------------------------------------------------------ *

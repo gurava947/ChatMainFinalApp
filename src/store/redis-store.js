@@ -20,14 +20,18 @@ const {
   avatarKey,
   callRecordKey,
   callUserKey,
+  signalMailboxKey,
   statusKey,
   statusUserKey,
   statusActiveKey,
   CALL_HISTORY_MAX,
   CALL_RECORD_TTL_SECONDS,
+  SIGNAL_MAILBOX_MAX_ENTRIES,
+  SIGNAL_MAILBOX_TTL_SECONDS,
   STATUS_MAX_PER_USER
 } = require('../constants');
 const { baseMime } = require('../utils/media');
+const { deriveMailbox } = require('../utils/signal-mailbox');
 const { normalizeViewers } = require('../utils/status');
 const { requireOptions } = require('./options');
 
@@ -74,6 +78,21 @@ redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[3]))
 return 1
 `;
 
+/**
+ * A new description starts a new ICE generation, so the candidates gathered
+ * for the old one are dropped in the same atomic write. The trim and TTL ride
+ * along because a mailbox that outlives its call is a replay of a dead call.
+ */
+const SIGNAL_MAILBOX_APPEND = `
+if ARGV[1] == 'description' then
+  redis.call('DEL', KEYS[1])
+end
+redis.call('RPUSH', KEYS[1], ARGV[2])
+redis.call('LTRIM', KEYS[1], -tonumber(ARGV[3]), -1)
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
+return redis.call('LLEN', KEYS[1])
+`;
+
 class RedisStore {
   constructor(client, {
     messageCacheSize,
@@ -107,6 +126,7 @@ class RedisStore {
     client.defineCommand('incrWithTtl', { numberOfKeys: 1, lua: INCR_WITH_TTL });
     client.defineCommand('saddWithTtl', { numberOfKeys: 1, lua: SADD_WITH_TTL });
     client.defineCommand('roomRosterCas', { numberOfKeys: 1, lua: ROOM_ROSTER_CAS });
+    client.defineCommand('signalMailboxAppend', { numberOfKeys: 1, lua: SIGNAL_MAILBOX_APPEND });
   }
 
   async ping() {
@@ -680,6 +700,40 @@ class RedisStore {
     for (const id of doomed) multi.del(callRecordKey(id));
     await multi.exec();
     return ids.length;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Signal mailbox (P5). The live relay stays the fast path; this is the
+   * copy a reconnect reads when the isolate froze before the packet landed.
+   * ------------------------------------------------------------------ */
+
+  async appendSignal(callId, userId, entry) {
+    await this.client.signalMailboxAppend(
+      signalMailboxKey(callId, userId),
+      entry.kind,
+      JSON.stringify(entry),
+      SIGNAL_MAILBOX_MAX_ENTRIES,
+      SIGNAL_MAILBOX_TTL_SECONDS
+    );
+    return entry;
+  }
+
+  async readSignalMailbox(callId, userId) {
+    const raw = await this.client.lrange(signalMailboxKey(callId, userId), 0, -1);
+    const entries = raw.map((item) => {
+      try {
+        return JSON.parse(item);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+    return deriveMailbox(entries);
+  }
+
+  async clearSignalMailbox(callId, userIds) {
+    const keys = [...new Set(userIds)].map((userId) => signalMailboxKey(callId, userId));
+    if (keys.length === 0) return 0;
+    return this.client.del(...keys);
   }
 
   /* ------------------------------------------------------------------ *
