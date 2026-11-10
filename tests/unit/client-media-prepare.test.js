@@ -121,7 +121,7 @@ describe('the upload path uses it', () => {
   test('picked files run through the optimiser with this device setting', () => {
     expect(APP_SOURCE).toMatch(/import \{ prepareFiles, readHdPreference, saveHdPreference \} from '\.\/mediaPrepare'/);
     expect(APP_SOURCE).toMatch(/await prepareFiles\(files, \{ hd: readHdPreference\(\) \}\)/);
-    expect(APP_SOURCE).toMatch(/await uploadFiles\(prepared\)/);
+    expect(APP_SOURCE).toMatch(/await uploadFiles\(prepared, \{/);
   });
 
   test('the sender is told what the shrink saved', () => {

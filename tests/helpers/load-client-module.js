@@ -75,6 +75,14 @@ const TRANSFER_EXPORTS = [
   'createTransferRecord', 'ackChunk', 'canResume', 'failTransfer',
 ];
 
+/** The data-channel fast path: framing, watermarks and the resume handshake. */
+const FILE_TRANSFER_EXPORTS = [
+  'FILE_CHANNEL_LABEL', 'FILE_CHUNK_WINDOW', 'FILE_ACK_EVERY', 'FILE_HIGH_WATER', 'FILE_LOW_WATER',
+  'FILE_CHANNEL_TIMEOUT_MS', 'FILE_HEADER_BYTES', 'FILE_RESUME_TIMEOUT_MS',
+  'directFileKey', 'encodeChunkFrame', 'decodeChunkFrame', 'controlFrame', 'parseControlFrame',
+  'bitmapToArray', 'bitmapFromArray', 'waitForDrain', 'createFileTransferController',
+];
+
 /** The 24-hour status feed (P8): palette, countdown, ordering and viewer copy. */
 const STATUS_FEED_EXPORTS = [
   'STATUS_PALETTE', 'STATUS_TEXT_MAX', 'timeLeftLabel', 'isLive', 'hasUnseen', 'pickColor',
@@ -193,6 +201,10 @@ function loadTransferProtocol() {
   return loadClientModule('transferProtocol.js', TRANSFER_EXPORTS);
 }
 
+function loadFileTransfer() {
+  return loadClientModule('fileTransfer.js', FILE_TRANSFER_EXPORTS);
+}
+
 function loadStatusFeed() {
   return loadClientModule('statusFeed.js', STATUS_FEED_EXPORTS);
 }
@@ -219,8 +231,8 @@ function loadPreferences() {
 
 module.exports = {
   loadRoomChat, loadRichCards, loadA11y, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadIceCache, loadCallRecovery, loadTransferProtocol, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
+  loadCallHistory, loadIceCache, loadCallRecovery, loadTransferProtocol, loadFileTransfer, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, A11Y_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
-  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, ICE_CACHE_EXPORTS, CALL_RECOVERY_EXPORTS, TRANSFER_EXPORTS,
+  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, ICE_CACHE_EXPORTS, CALL_RECOVERY_EXPORTS, TRANSFER_EXPORTS, FILE_TRANSFER_EXPORTS,
   STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS, LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS, PREFERENCE_EXPORTS,
 };

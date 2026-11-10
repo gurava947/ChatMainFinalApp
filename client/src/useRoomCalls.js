@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ICE_FALLBACK, primeIceConfig, readIceServers } from './iceCache'
 import { RECOVERY_WINDOW_MS, recoveryAction, recoveryGrace, restoredCallStatus } from './callRecovery'
+import { FILE_CHANNEL_LABEL, FILE_CHANNEL_TIMEOUT_MS, createFileTransferController } from './fileTransfer'
+import * as transferProtocol from './transferProtocol'
+import { saveTransfer } from './localStore'
 
 function sendAck(socket, event, payload) {
   return new Promise((resolve, reject) => {
@@ -12,7 +15,7 @@ function sendAck(socket, event, payload) {
   })
 }
 
-export default function useRoomCalls(socket, roomId, session) {
+export default function useRoomCalls(socket, roomId, session, options = {}) {
   const [peers, setPeers] = useState([])
   const [call, setCall] = useState(null)
   const [remoteStream, setRemoteStream] = useState(null)
@@ -22,6 +25,7 @@ export default function useRoomCalls(socket, roomId, session) {
   const [muted, setMuted] = useState(false)
   const [cameraOff, setCameraOff] = useState(false)
   const [cameraFacing, setCameraFacing] = useState('user')
+  const [fileChannelOpen, setFileChannelOpen] = useState(false)
   const cameraOffRef = useRef(false)
   const callRef = useRef(null)
   const remoteStreamRef = useRef(null)
@@ -36,6 +40,24 @@ export default function useRoomCalls(socket, roomId, session) {
   const remoteVideoRef = useRef(null)
   const remoteAudioRef = useRef(null)
   const localVideoRef = useRef(null)
+  /**
+   * The file controller outlives the peer connection: a Phase 2 rebuild swaps
+   * the data channel underneath an in-flight transfer and the bitmap resumes it
+   * instead of restarting. Callbacks are read through a ref because the caller
+   * hands in fresh closures on every render while the controller is made once.
+   */
+  const fileOptionsRef = useRef(options)
+  fileOptionsRef.current = options
+  const fileTransferRef = useRef(null)
+  if (!fileTransferRef.current) {
+    fileTransferRef.current = createFileTransferController({
+      protocol: transferProtocol,
+      store: { saveRecord: saveTransfer },
+      onReceived: (file) => fileOptionsRef.current.onFileReceived?.(file),
+      onBound: (binding) => fileOptionsRef.current.onFileBound?.(binding),
+      onStateChange: setFileChannelOpen,
+    })
+  }
 
   const updateCall = (next) => {
     callRef.current = next
@@ -56,11 +78,15 @@ export default function useRoomCalls(socket, roomId, session) {
     cameraOffRef.current = false
     signalDroppedRef.current = false
     clearRecovery()
+    // A transfer has no receiver once the call is gone; leaving its `done`
+    // pending would keep a progress bar alive forever.
+    fileTransferRef.current?.abortAll()
     peerConnectionRef.current = null
     if (connection) {
       connection.onicecandidate = null
       connection.ontrack = null
       connection.onconnectionstatechange = null
+      connection.ondatachannel = null
       connection.close()
     }
     current?.localStream?.getTracks().forEach((track) => track.stop())
@@ -155,6 +181,17 @@ export default function useRoomCalls(socket, roomId, session) {
           failCall(active, 'The media path could not connect. This network may require a TURN relay; check the deployment ICE/TURN configuration.')
         }
       }
+      // The caller owns the one ordered channel; the callee attaches the channel
+      // it is handed. It has to be set before setRemoteDescription so an offer
+      // that arrives with a channel is never dropped on the floor.
+      connection.ondatachannel = (event) => {
+        if (event.channel?.label !== FILE_CHANNEL_LABEL) return
+        fileTransferRef.current?.attach(event.channel)
+      }
+      if (active.direction === 'outgoing') {
+        const files = connection.createDataChannel(FILE_CHANNEL_LABEL, { ordered: true })
+        fileTransferRef.current?.attach(files)
+      }
       peerConnectionRef.current = connection
       return connection
     }
@@ -176,10 +213,14 @@ export default function useRoomCalls(socket, roomId, session) {
 
     const rebuildConnection = (active) => {
       const previous = peerConnectionRef.current
+      // The old channel dies with its connection; the controller keeps its
+      // bitmaps and waits for the replacement instead of failing the transfer.
+      fileTransferRef.current?.detach()
       if (previous) {
         previous.onicecandidate = null
         previous.ontrack = null
         previous.onconnectionstatechange = null
+        previous.ondatachannel = null
         peerConnectionRef.current = null
         previous.close()
       }
@@ -637,6 +678,29 @@ export default function useRoomCalls(socket, roomId, session) {
     }
   }
 
+  /**
+   * Offers a file to the peer over the call's data channel.
+   *
+   * Returns null - immediately when there is no call, or after the channel
+   * window - so the caller can keep the upload as the guarantee and treat this
+   * purely as an acceleration. The transfer id comes back before the bytes are
+   * done so the media id from that upload can be bound as soon as it lands.
+   */
+  const sendFileToPeer = async (file, sendOptions = {}) => {
+    const controller = fileTransferRef.current
+    if (!controller || !file || !callRef.current) return null
+    if (Number(file.size) > transferProtocol.TRANSFER_MAX_BYTES) return null
+    const open = await controller.whenOpen(FILE_CHANNEL_TIMEOUT_MS)
+    if (!open) return null
+    return controller.send(file, sendOptions)
+  }
+
+  const bindFileToPeer = (transferId, mediaId) => {
+    const controller = fileTransferRef.current
+    if (!controller || !transferId || !mediaId) return false
+    return controller.bind(transferId, mediaId)
+  }
+
   return {
     peers,
     call,
@@ -662,5 +726,8 @@ export default function useRoomCalls(socket, roomId, session) {
     toggleCamera,
     switchCamera,
     cameraFacing,
+    fileChannelOpen,
+    sendFileToPeer,
+    bindFileToPeer,
   }
 }

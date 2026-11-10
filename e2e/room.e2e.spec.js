@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('node:fs');
+const nodeCrypto = require('node:crypto');
 const { test, expect } = require('@playwright/test');
 
 const CONTEXT_OPTIONS = { permissions: ['microphone', 'camera'] };
@@ -60,6 +62,17 @@ async function pairTwoGuests(browser, label, onPageCreated) {
 
 async function expectBubble(page, text) {
   await expect(page.locator('.bubble-text').filter({ hasText: text })).toBeVisible();
+}
+
+async function connectAudioCall(owner, guest) {
+  await guest.getByRole('button', { name: 'Start audio call' }).click();
+  const picker = guest.getByRole('dialog', { name: 'Choose someone for an audio call' });
+  await picker.getByRole('button', { name: /E2E Owner/ }).click();
+  const incoming = owner.getByRole('dialog', { name: 'audio call with E2E Guest' });
+  await expect(incoming).toBeVisible();
+  await incoming.getByRole('button', { name: 'Accept' }).click();
+  await expect(owner.getByText('Audio connected')).toBeVisible({ timeout: 30_000 });
+  await expect(guest.getByText('Audio connected')).toBeVisible({ timeout: 30_000 });
 }
 
 /** The ICE config must be warmed once at boot and never again on the call path. */
@@ -169,6 +182,73 @@ test('one seat can call the other with video and both see a live frame', async (
     const outgoing = guest.getByRole('dialog', { name: 'video call with E2E Owner' });
     await outgoing.getByRole('button', { name: 'End call' }).last().click();
     await expect(owner.getByRole('status').filter({ hasText: 'Call ended.' })).toBeVisible();
+  } finally {
+    await ownerContext.close();
+    await guestContext.close();
+  }
+});
+
+test('a file picked during a call reaches the peer over the direct channel', async ({ browser }) => {
+  const { ownerContext, guestContext, owner, guest } = await pairTwoGuests(browser, 'direct-file');
+  const pageErrors = [];
+  for (const page of [owner, guest]) {
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+  }
+
+  try {
+    await connectAudioCall(owner, guest);
+
+    const bytes = Buffer.alloc(2 * 1024 * 1024);
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = (index * 31 + 7) % 256;
+    await owner.locator('input[type="file"]:not([accept])').setInputFiles({
+      name: 'direct-e2e.bin',
+      mimeType: 'application/octet-stream',
+      buffer: bytes
+    });
+
+    // The receiver renders the peer's assembled bytes, not the server copy:
+    // a blob: href is only possible once the data channel delivered the file.
+    const guestFile = guest.locator('.file-attachment').filter({ hasText: 'direct-e2e.bin' });
+    await expect(guestFile).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => guestFile.getAttribute('href'), { timeout: 30_000 }).toMatch(/^blob:/);
+
+    // Hash what a real download produces: the CSP deliberately keeps blob:
+    // out of connect-src, so the bytes are read the way the guest reads them.
+    // The docked call window is modal, so it goes to its pill first.
+    await guest.getByRole('button', { name: 'Minimise the call' }).click();
+    await expect(guest.getByRole('group', { name: 'audio call with E2E Owner, minimised' })).toBeVisible();
+    const expected = nodeCrypto.createHash('sha256').update(bytes).digest('hex');
+    const [download] = await Promise.all([
+      guest.waitForEvent('download', { timeout: 15_000 }),
+      guestFile.click()
+    ]);
+    const downloaded = await download.path();
+    const actual = nodeCrypto.createHash('sha256').update(fs.readFileSync(downloaded)).digest('hex');
+    expect(actual).toBe(expected);
+
+    // The sender's own bubble keeps the durable server attachment.
+    await expect(owner.locator('.file-attachment').filter({ hasText: 'direct-e2e.bin' })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  } finally {
+    await ownerContext.close();
+    await guestContext.close();
+  }
+});
+
+test('a file sent without a call still lands as a server attachment', async ({ browser }) => {
+  const { ownerContext, guestContext, owner, guest } = await pairTwoGuests(browser, 'fallback-file');
+
+  try {
+    await owner.locator('input[type="file"]:not([accept])').setInputFiles({
+      name: 'fallback-e2e.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('the upload path keeps the same attachment')
+    });
+
+    const guestFile = guest.locator('.file-attachment').filter({ hasText: 'fallback-e2e.txt' });
+    await expect(guestFile).toBeVisible({ timeout: 30_000 });
+    await expect(guestFile).toHaveAttribute('href', /\/media\//);
+    await expect(owner.locator('.file-attachment').filter({ hasText: 'fallback-e2e.txt' })).toBeVisible();
   } finally {
     await ownerContext.close();
     await guestContext.close();

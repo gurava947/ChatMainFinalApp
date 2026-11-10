@@ -44,6 +44,9 @@ import {
 } from './localStore'
 import useRoomCalls from './useRoomCalls'
 import { primeIceConfig } from './iceCache'
+import { directFileKey } from './fileTransfer'
+import { createTransferWorker } from './transferWorker'
+import { TRANSFER_CHUNK_BYTES, TRANSFER_MAX_BYTES } from './transferProtocol'
 
 const navItems = [
   { to: '/', label: 'Chats', icon: MessageCircle, end: true },
@@ -281,11 +284,13 @@ function toUiMessage(message, session) {
   }
 }
 
-function MessageAttachment({ attachment, voiceContent, onOpenMedia }) {
-  const url = attachment.url || (attachment.id ? `/media/${encodeURIComponent(attachment.id)}` : '')
+function MessageAttachment({ attachment, directUrl, voiceContent, onOpenMedia }) {
+  // The peer's bytes outlive the attachment row: they arrived over the call
+  // before the upload named them, so they win even for an expired row.
+  const url = directUrl || attachment.url || (attachment.id ? `/media/${encodeURIComponent(attachment.id)}` : '')
   // The message row outlives the bytes it points at, so the gap is named
   // instead of leaving a thumbnail that 404s when it is opened.
-  if (attachment.expired) return <div className="message-attachment attachment-missing">This file is no longer on the server.</div>
+  if (attachment.expired && !directUrl) return <div className="message-attachment attachment-missing">This file is no longer on the server.</div>
   if (!url) return <div className="message-attachment attachment-missing">Attachment unavailable</div>
   if (attachment.kind === 'image') {
     return <button type="button" className="message-attachment image-attachment" aria-label={`View ${attachment.name || 'shared image'} full screen`} onClick={() => onOpenMedia({ kind: 'image', url, name: attachment.name || 'Shared image' })}><img src={url} alt={attachment.name || 'Shared image'} loading="lazy" decoding="async" /></button>
@@ -1092,6 +1097,66 @@ function AuthorPopMenu({ author, onBlock, onClose }) {
   )
 }
 
+/**
+ * The digest a direct transfer commits to.
+ *
+ * It is SHA-256 over the concatenated per-chunk digests, over the same 16 KiB
+ * boundaries the channel slices - the same value the Phase 3 worker produces.
+ * The receiver hashes the chunks it assembled and compares, so a file that
+ * changed in flight is refused rather than saved under the wrong name.
+ */
+function toHex(buffer) {
+  return Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+async function manifestDigestOfBlob(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const chunks = Math.ceil(bytes.length / TRANSFER_CHUNK_BYTES)
+  const joined = new Uint8Array(chunks * 32)
+  for (let index = 0; index < chunks; index += 1) {
+    const slice = bytes.subarray(index * TRANSFER_CHUNK_BYTES, Math.min(bytes.length, (index + 1) * TRANSFER_CHUNK_BYTES))
+    joined.set(new Uint8Array(await crypto.subtle.digest('SHA-256', slice)), index * 32)
+  }
+  return toHex(await crypto.subtle.digest('SHA-256', joined))
+}
+
+/**
+ * Hashing a large file on the main thread is what the worker exists to avoid:
+ * read-and-hash in the worker while the upload is already running here. A
+ * worker that cannot start is not a failure - the caller falls back to the
+ * main-thread pass, and a file with no digest is simply verified less strictly
+ * by the receiver.
+ */
+function hashFileInWorker(id, file) {
+  const worker = createTransferWorker()
+  if (!worker) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    let timer = 0
+    const settle = (digest) => {
+      window.clearTimeout(timer)
+      worker.terminate()
+      resolve(digest)
+    }
+    timer = window.setTimeout(() => settle(null), 120000)
+    worker.onmessage = (event) => {
+      const message = event.data || {}
+      if (message.id !== id) return
+      if (message.type === 'manifest') settle(message.digest || null)
+      else if (message.type === 'error') settle(null)
+    }
+    worker.onerror = () => settle(null)
+    worker.postMessage({ type: 'open', id, file })
+    worker.postMessage({ type: 'manifest', id })
+  })
+}
+
+async function directFileDigest(id, file) {
+  const hashed = await hashFileInWorker(id, file)
+  if (hashed) return hashed
+  if (!crypto.subtle) return null
+  return manifestDigestOfBlob(file)
+}
+
 function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, autoCall, onAutoCallHandled }) {
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState([])
@@ -1110,6 +1175,8 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const [hdQuality, setHdQuality] = useState(readHdPreference)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [transferProgress, setTransferProgress] = useState(null)
+  const [directFiles, setDirectFiles] = useState({})
   const [recording, setRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
   const [messageSearchOpen, setMessageSearchOpen] = useState(false)
@@ -1156,7 +1223,32 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
   const recordingChunksRef = useRef([])
   const recordingStartRef = useRef(0)
   const attachMenuRef = useRef(null)
-  const calls = useRoomCalls(socket, chat.id, session)
+  /** Blob URLs this room's peer handed over, kept until the chat is closed. */
+  const directUrlsRef = useRef(new Map())
+  const directObjectUrlsRef = useRef([])
+  const directSeqRef = useRef(0)
+  const calls = useRoomCalls(socket, chat.id, session, {
+    onFileReceived: (file) => {
+      if (!file?.blob) return
+      const url = URL.createObjectURL(file.blob)
+      directObjectUrlsRef.current.push(url)
+      directUrlsRef.current.set(file.transferId, url)
+      // The manifest names the file before the message names its media id, so
+      // the assembled bytes are reachable by both keys.
+      setDirectFiles((current) => ({ ...current, [directFileKey(file.name, file.size, file.mime)]: url }))
+    },
+    onFileBound: ({ transferId, mediaId }) => {
+      const url = directUrlsRef.current.get(transferId)
+      if (!url || !mediaId) return
+      directUrlsRef.current.set(mediaId, url)
+      setDirectFiles((current) => ({ ...current, [mediaId]: url }))
+    },
+  })
+  useEffect(() => () => {
+    directObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+    directObjectUrlsRef.current = []
+    directUrlsRef.current.clear()
+  }, [])
   useDialogTrap(attachMenuRef, { active: attachmentMenuOpen, onClose: () => setAttachmentMenuOpen(false) })
   const chatOverlayOpen = attachmentMenuOpen || emojiOpen || calls.pickerMode || messageSearchOpen || settingsOpen || Boolean(richSheet) || Boolean(mediaViewer)
   useBackDismiss(chatOverlayOpen, () => {
@@ -1198,6 +1290,13 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     window.clearTimeout(noticeTimerRef.current)
     noticeTimerRef.current = window.setTimeout(() => setNotice(''), 3500)
   }
+  /** One set of props for a bubble attachment, with the peer's own copy preferred. */
+  const attachmentView = (attachment, message) => ({
+    attachment,
+    directUrl: directFiles[attachment.id] || directFiles[directFileKey(attachment.name, attachment.size, attachment.mime)],
+    voiceContent: message.content?.type === 'voice' ? message.content : null,
+    onOpenMedia: setMediaViewer,
+  })
 
   /**
    * Reads this device's own copy of the room before the network has answered.
@@ -1702,16 +1801,56 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
     return () => window.clearInterval(timer)
   }, [recording])
 
-  const uploadFiles = async (files) => {
+  /**
+   * The upload is still the guarantee - the server validates attachment ids
+   * against records it owns - so progress is reported from here with XHR,
+   * whose `upload` events `fetch` cannot provide.
+   */
+  const uploadFiles = (files, uploadOptions = {}) => new Promise((resolve, reject) => {
     const form = new FormData()
     files.forEach((file) => form.append('files', file))
-    const response = await fetch('/api/media', { method: 'POST', headers: sessionHeaders(session), body: form })
-    const result = await response.json().catch(() => ({}))
-    if (!response.ok || !Array.isArray(result.media)) {
-      const reason = result.error === 'file_too_large' ? 'A selected file is larger than the upload limit.' : (result.error || 'File upload failed.')
-      throw new Error(reason)
-    }
-    return result.media
+    const request = new XMLHttpRequest()
+    request.open('POST', '/api/media')
+    request.withCredentials = true
+    Object.entries(sessionHeaders(session)).forEach(([name, value]) => request.setRequestHeader(name, value))
+    request.responseType = 'json'
+    request.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) uploadOptions.onProgress?.(event.loaded / event.total)
+    })
+    const fail = () => reject(new Error('File upload failed.'))
+    request.addEventListener('load', () => {
+      const result = request.response || {}
+      if (request.status < 200 || request.status >= 300 || !Array.isArray(result.media)) {
+        const reason = result.error === 'file_too_large' ? 'A selected file is larger than the upload limit.' : (result.error || 'File upload failed.')
+        reject(new Error(reason))
+        return
+      }
+      resolve(result.media)
+    })
+    request.addEventListener('error', fail)
+    request.addEventListener('abort', fail)
+    request.send(form)
+  })
+
+  /**
+   * Starts the direct path beside the upload. It resolves to a transfer handle
+   * (the id is usable before the bytes finish) or null when there is no call,
+   * no channel inside the window, or the file is over the ceiling - in every
+   * one of those cases the upload is the only path and nobody is told.
+   */
+  const startDirectSend = (file) => {
+    if (!file || file.size > TRANSFER_MAX_BYTES || !calls.call) return null
+    const id = `direct-${++directSeqRef.current}-${Date.now()}`
+    return (async () => {
+      const digest = await directFileDigest(id, file)
+      if (!digest) return null
+      const handle = await calls.sendFileToPeer(file, {
+        digest,
+        onProgress: (state) => setTransferProgress((current) => ({ ...(current || {}), direct: state.percent })),
+      })
+      if (!handle) setTransferProgress((current) => ({ ...(current || {}), direct: null }))
+      return handle
+    })().catch(() => null)
   }
 
   const sendRoomPayload = (payload) => {
@@ -1775,9 +1914,21 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       return
     }
     setUploading(true)
+    setTransferProgress(null)
     try {
       const prepared = await prepareFiles(files, { hd: readHdPreference() })
-      const uploaded = await uploadFiles(prepared)
+      // The direct path starts first so the bytes can move while the upload
+      // still streams; it is only ever an accelerant for the message below.
+      const direct = prepared.map((file) => startDirectSend(file))
+      const uploaded = await uploadFiles(prepared, {
+        onProgress: (fraction) => setTransferProgress((current) => ({ ...(current || {}), upload: Math.round(fraction * 100) })),
+      })
+      direct.forEach((pending, index) => {
+        if (!pending) return
+        pending.then((handle) => {
+          if (handle) calls.bindFileToPeer(handle.transferId, uploaded[index].id)
+        })
+      })
       const saved = prepared.reduce((bytes, file, index) => bytes + files[index].size - file.size, 0)
       if (saved > 20 * 1024) showNotice(`Sent ${Math.round(saved / 1024)} KB lighter — turn on HD media in chat settings for the original size.`)
       if (sendRoomPayload({ text: draft, attachments: uploaded })) setDraft('')
@@ -1785,6 +1936,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       showNotice(error.message || 'File upload failed.')
     } finally {
       setUploading(false)
+      setTransferProgress(null)
     }
   }
 
@@ -1980,7 +2132,7 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
               {message.content?.type === 'poll' && <PollCard message={message} session={session} socket={socket} onNotice={showNotice} />}
               {message.content?.type === 'contact' && <ContactCard content={message.content} />}
               {message.content?.type === 'event' && <EventCard message={message} onNotice={showNotice} />}
-              {message.attachments?.length > 0 && <div className={`message-attachments${message.attachments.length > 1 ? ' multiple' : ''}`}>{message.attachments.map((attachment) => <MessageAttachment key={attachment.id} attachment={attachment} voiceContent={message.content?.type === 'voice' ? message.content : null} onOpenMedia={setMediaViewer} />)}</div>}
+              {message.attachments?.length > 0 && <div className={`message-attachments${message.attachments.length > 1 ? ' multiple' : ''}`}>{message.attachments.map((attachment) => <MessageAttachment key={attachment.id} {...attachmentView(attachment, message)} />)}</div>}
               {message.text && <span className="bubble-text">{highlightText(message.text, searchIsActive ? messageSearchText : '')}</span>}
               <span className="bubble-meta"><time dateTime={new Date(message.ts).toISOString()}>{message.time}</time>{message.sender === 'me' && <MessageStatus message={message} userId={session.userId} />}</span>
             </div>
@@ -1991,7 +2143,11 @@ function ChatPreview({ chat, session, onClose, onLatestMessage, onChatRemoved, a
       </div>
       <div className="preview-compose">
         <p className="preview-demo-note">Room: <strong>#{chat.id}</strong> · guest chat, no account required</p>
-        {uploading && <p className="uploading-indicator" role="status"><span className="loading-dots" aria-hidden="true"><i /><i /><i /></span>Preparing your media</p>}
+        {uploading && <p className="uploading-indicator" role="status"><span className="loading-dots" aria-hidden="true"><i /><i /><i /></span>
+          {transferProgress?.direct != null ? `Sending directly ${Math.round(transferProgress.direct)}%`
+            : transferProgress?.upload != null ? `Uploading ${Math.round(transferProgress.upload)}%`
+              : 'Preparing your media'}
+        </p>}
         {recording && <p className="recording-indicator" role="status"><i /> Recording voice · {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, '0')} — tap the mic to send</p>}
         <form className="compose-controls" onSubmit={sendMessage}>
           <div className="compose-field">
