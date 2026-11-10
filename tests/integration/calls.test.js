@@ -86,6 +86,12 @@ describe('call history', () => {
       callId,
       candidate: { candidate: 'candidate:1 1 udp 100 10.0.0.1 50000 typ host', sdpMid: '0', sdpMLineIndex: 0 }
     })).toMatchObject({ ok: true });
+    await waitFor(callee, 'call:ice', (p) => p.callId === callId);
+
+    // The callee asks the caller to restart ICE; this relay carries no media
+    // and must reach the caller with the sender's identity intact.
+    expect(await emitWithAck(callee, 'call:restart', { targetSocketId: caller.id, callId })).toMatchObject({ ok: true });
+    await waitFor(caller, 'call:restart', (p) => p.callId === callId && p.fromSocketId === callee.id);
 
     expect(await emitWithAck(caller, 'call:end', { targetSocketId: callee.id, callId })).toMatchObject({ ok: true });
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ICE_FALLBACK, primeIceConfig, readIceServers } from './iceCache'
+import { RECOVERY_WINDOW_MS, recoveryAction, recoveryGrace, restoredCallStatus } from './callRecovery'
 
 function sendAck(socket, event, payload) {
   return new Promise((resolve, reject) => {
@@ -29,9 +30,9 @@ export default function useRoomCalls(socket, roomId, session) {
   const cameraFacingRef = useRef('user')
   const cameraSwitchRequestRef = useRef(0)
   const cameraSwitchPendingRef = useRef(false)
-  const callBeforeSignalDropRef = useRef(null)
   const signalDroppedRef = useRef(false)
   const prepareConnectionRef = useRef(null)
+  const recoveryRef = useRef({ attempt: 0, grace: 0, window: 0, active: false })
   const remoteVideoRef = useRef(null)
   const remoteAudioRef = useRef(null)
   const localVideoRef = useRef(null)
@@ -41,6 +42,12 @@ export default function useRoomCalls(socket, roomId, session) {
     setCall(next)
   }
 
+  const clearRecovery = () => {
+    window.clearTimeout(recoveryRef.current.grace)
+    window.clearTimeout(recoveryRef.current.window)
+    recoveryRef.current = { attempt: 0, grace: 0, window: 0, active: false }
+  }
+
   const cleanupLocal = () => {
     const current = callRef.current
     const connection = peerConnectionRef.current
@@ -48,6 +55,7 @@ export default function useRoomCalls(socket, roomId, session) {
     cameraSwitchPendingRef.current = false
     cameraOffRef.current = false
     signalDroppedRef.current = false
+    clearRecovery()
     peerConnectionRef.current = null
     if (connection) {
       connection.onicecandidate = null
@@ -62,7 +70,6 @@ export default function useRoomCalls(socket, roomId, session) {
     setRemoteVideoReady(false)
     setMuted(false)
     setCameraOff(false)
-    callBeforeSignalDropRef.current = null
     updateCall(null)
   }
 
@@ -141,21 +148,117 @@ export default function useRoomCalls(socket, roomId, session) {
         setRemoteStream(stream)
       }
       connection.onconnectionstatechange = () => {
-        if (connection.connectionState === 'connected') {
-          const current = callRef.current
-          if (current?.callId === active.callId) updateCall({ ...current, status: 'active' })
-        } else if (connection.connectionState === 'failed') {
-          const current = callRef.current
-          if (current?.callId === active.callId) {
-            updateCall({ ...current, status: 'failed' })
-            setFeedback('The media path could not connect. This network may require a TURN relay; check the deployment ICE/TURN configuration.')
-          }
+        const state = connection.connectionState
+        if (state === 'connected') markConnected(active)
+        else if (state === 'disconnected' || state === 'failed') scheduleRecovery(active, state)
+        else if (state === 'closed' && peerConnectionRef.current === connection) {
+          failCall(active, 'The media path could not connect. This network may require a TURN relay; check the deployment ICE/TURN configuration.')
         }
       }
       peerConnectionRef.current = connection
       return connection
     }
     prepareConnectionRef.current = createPeerConnection
+
+    const markConnected = (active) => {
+      clearRecovery()
+      const current = callRef.current
+      if (current?.callId === active.callId) updateCall({ ...current, status: 'active' })
+    }
+
+    const failCall = (active, message) => {
+      clearRecovery()
+      const current = callRef.current
+      if (current?.callId !== active.callId) return
+      updateCall({ ...current, status: 'failed' })
+      setFeedback(message)
+    }
+
+    const rebuildConnection = (active) => {
+      const previous = peerConnectionRef.current
+      if (previous) {
+        previous.onicecandidate = null
+        previous.ontrack = null
+        previous.onconnectionstatechange = null
+        peerConnectionRef.current = null
+        previous.close()
+      }
+      pendingIceRef.current = []
+      return createPeerConnection(active)
+    }
+
+    /**
+     * One step of the recovery ladder. The caller restarts ICE first and
+     * rebuilds the peer connection only if that window closes without media;
+     * the callee asks the caller to do the same instead of negotiating too.
+     */
+    const attemptRecovery = async (active, attempt) => {
+      const current = callRef.current
+      if (!recoveryRef.current.active || !current || current.callId !== active.callId || current.status === 'failed') return
+      const action = recoveryAction(attempt, active.direction)
+      if (action === 'fail') {
+        failCall(active, 'The call could not recover the media path. Check your network; a TURN relay may be required.')
+        return
+      }
+      updateCall({ ...current, status: 'reconnecting' })
+      recoveryRef.current.attempt = attempt
+      try {
+        if (action === 'rebuild') {
+          const connection = rebuildConnection(active)
+          const offer = await connection.createOffer()
+          await connection.setLocalDescription(offer)
+          socket.emit('call:offer', {
+            targetSocketId: active.peerSocketId,
+            callId: active.callId,
+            description: connection.localDescription,
+          })
+        } else if (action === 'restart') {
+          const connection = peerConnectionRef.current
+          if (!connection) {
+            failCall(active, 'The call could not recover the media path. Check your network; a TURN relay may be required.')
+            return
+          }
+          connection.restartIce?.()
+          const offer = await connection.createOffer({ iceRestart: true })
+          await connection.setLocalDescription(offer)
+          socket.emit('call:offer', {
+            targetSocketId: active.peerSocketId,
+            callId: active.callId,
+            description: connection.localDescription,
+          })
+        } else {
+          socket.emit('call:restart', { targetSocketId: active.peerSocketId, callId: active.callId })
+        }
+      } catch { /* the window below decides whether the next step runs */ }
+      if (!recoveryRef.current.active || callRef.current?.callId !== active.callId) return
+      recoveryRef.current.window = window.setTimeout(() => attemptRecovery(active, attempt + 1), RECOVERY_WINDOW_MS)
+    }
+
+    const beginRecovery = (active) => {
+      const current = callRef.current
+      if (!current || current.callId !== active.callId || current.status === 'failed') return
+      if (recoveryRef.current.active) return
+      clearRecovery()
+      recoveryRef.current.active = true
+      attemptRecovery(active, 0)
+    }
+
+    const scheduleRecovery = (active, peerState) => {
+      const current = callRef.current
+      if (!current || current.callId !== active.callId || current.status === 'failed') return
+      if (recoveryRef.current.active || recoveryRef.current.grace) return
+      const grace = recoveryGrace(peerState)
+      if (!grace) {
+        beginRecovery(active)
+        return
+      }
+      // A brief blip is left alone; only a connection that stays down is shown
+      // as reconnecting and handed to the recovery ladder.
+      recoveryRef.current.grace = window.setTimeout(() => {
+        recoveryRef.current.grace = 0
+        beginRecovery(active)
+      }, grace)
+    }
 
     const flushIce = async (connection) => {
       const queued = pendingIceRef.current.splice(0)
@@ -225,7 +328,11 @@ export default function useRoomCalls(socket, roomId, session) {
         pendingIceRef.current.push(signal.candidate)
         return
       }
-      try { await connection.addIceCandidate(new RTCIceCandidate(signal.candidate)) } catch { /* ignore candidates from a closed negotiation */ }
+      try { await connection.addIceCandidate(new RTCIceCandidate(signal.candidate)) } catch {
+        // A candidate for an offer that has not been applied yet is replayed
+        // once the new description lands.
+        pendingIceRef.current.push(signal.candidate)
+      }
     }
 
     const onDeclined = (signal) => {
@@ -246,28 +353,26 @@ export default function useRoomCalls(socket, roomId, session) {
       const current = callRef.current
       if (!current || current.status === 'incoming' || current.status === 'failed') return
       signalDroppedRef.current = true
-      if (current.status !== 'reconnecting') callBeforeSignalDropRef.current = current.status
       updateCall({ ...current, status: 'reconnecting' })
     }
     const onSignalReconnect = () => {
       const current = callRef.current
       if (!signalDroppedRef.current) return
       signalDroppedRef.current = false
-      if (!current || current.status === 'incoming') {
-        callBeforeSignalDropRef.current = null
+      if (!current || current.status === 'incoming') return
+      const peerState = peerConnectionRef.current?.connectionState
+      if (peerState === 'disconnected' || peerState === 'failed') {
+        scheduleRecovery(current, peerState)
         return
       }
-      const previousStatus = callBeforeSignalDropRef.current
-      callBeforeSignalDropRef.current = null
-      const connection = peerConnectionRef.current
-      const peerState = connection?.connectionState
-      const recoveredStatus = peerState === 'connected' ? 'active'
-        : peerState === 'failed' || peerState === 'closed' ? 'failed'
-          : peerState === 'disconnected' ? 'connecting'
-            : previousStatus || 'connecting'
-      // Signaling and media recover independently; derive call status from the
-      // peer connection instead of assuming the pre-disconnect state survived.
-      updateCall({ ...current, status: recoveredStatus })
+      // Signaling and media recover independently; derive the call status from
+      // the peer connection instead of assuming the old one survived.
+      updateCall({ ...current, status: restoredCallStatus(peerState) })
+    }
+    const onRestart = (signal) => {
+      const active = callRef.current
+      if (!active || active.direction !== 'outgoing' || active.callId !== signal.callId || active.peerSocketId !== signal.fromSocketId) return
+      beginRecovery(active)
     }
     socket.on('disconnect', onSignalDisconnect)
     socket.on('connect', onSignalReconnect)
@@ -277,6 +382,7 @@ export default function useRoomCalls(socket, roomId, session) {
     socket.on('call:offer', onOffer)
     socket.on('call:answer', onAnswer)
     socket.on('call:ice', onIce)
+    socket.on('call:restart', onRestart)
     socket.on('call:declined', onDeclined)
     socket.on('call:end', onEnded)
 
@@ -289,6 +395,7 @@ export default function useRoomCalls(socket, roomId, session) {
       socket.off('call:offer', onOffer)
       socket.off('call:answer', onAnswer)
       socket.off('call:ice', onIce)
+      socket.off('call:restart', onRestart)
       socket.off('call:declined', onDeclined)
       socket.off('call:end', onEnded)
       prepareConnectionRef.current = null

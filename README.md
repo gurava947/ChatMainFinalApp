@@ -184,15 +184,15 @@ per file and `MEDIA_MAX_PER_MESSAGE` per message, and the declared MIME never ov
 | `GET /media/:id` | attachment download, supports `Range` | unguessable id |
 
 **Socket events.** Client→server: `message`, `typing`, `stop_typing`, `room:join`, `message:seen`,
-`poll:vote`, `call:invite`, `call:accept`, `call:reject`, `call:offer`, `call:answer`, `call:ice` and
-`call:end`. The handshake carries the public user id and the separate bearer token; the id alone is not
+`poll:vote`, `call:invite`, `call:accept`, `call:reject`, `call:offer`, `call:answer`, `call:ice`,
+`call:restart` and `call:end`. The handshake carries the public user id and the separate bearer token; the id alone is not
 an authentication credential. Tokens are random, expire with their session, and only their SHA-256
 digests are stored server-side. The client must retain its token to restore its guest session.
 Sessions created before this change have no token and must be recreated on the next visit; their
 user-specific data remains attached to the old public id and is not transferred automatically.
 Server→client: `new_message`, `history`, `presence`, `user_joined`, `user_left`, `typing`,
 `stop_typing`, `message_seen`, `poll_voted`, `call:incoming`, `call:accepted`, `call:declined`,
-`call:offer`, `call:answer`, `call:ice`, `call:end` and `system`. Handshake `auth` carries
+`call:offer`, `call:answer`, `call:ice`, `call:restart`, `call:end` and `system`. Handshake `auth` carries
 `{ userId, sessionToken, room, roomCredential? }`.
 
 Every `/api/rooms/:room/*` route runs `assertRoomAccess`, which reads the room's roster, and the socket

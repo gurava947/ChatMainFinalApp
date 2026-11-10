@@ -61,6 +61,12 @@ const ICE_CACHE_EXPORTS = [
   'readIceServers', 'primeIceConfig', 'resetIceCache',
 ];
 
+/** Live-call recovery: grace, restart ladder and status after signaling returns. */
+const CALL_RECOVERY_EXPORTS = [
+  'RECONNECT_GRACE_MS', 'RECOVERY_WINDOW_MS', 'MAX_RECOVERY_ATTEMPTS',
+  'recoveryAction', 'recoveryGrace', 'restoredCallStatus',
+];
+
 /** The 24-hour status feed (P8): palette, countdown, ordering and viewer copy. */
 const STATUS_FEED_EXPORTS = [
   'STATUS_PALETTE', 'STATUS_TEXT_MAX', 'timeLeftLabel', 'isLive', 'hasUnseen', 'pickColor',
@@ -170,6 +176,10 @@ function loadIceCache() {
   return loadClientModule('iceCache.js', ICE_CACHE_EXPORTS);
 }
 
+function loadCallRecovery() {
+  return loadClientModule('callRecovery.js', CALL_RECOVERY_EXPORTS);
+}
+
 function loadStatusFeed() {
   return loadClientModule('statusFeed.js', STATUS_FEED_EXPORTS);
 }
@@ -196,8 +206,8 @@ function loadPreferences() {
 
 module.exports = {
   loadRoomChat, loadRichCards, loadA11y, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadIceCache, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
+  loadCallHistory, loadIceCache, loadCallRecovery, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, A11Y_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
-  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, ICE_CACHE_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
+  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, ICE_CACHE_EXPORTS, CALL_RECOVERY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
   LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS, PREFERENCE_EXPORTS,
 };

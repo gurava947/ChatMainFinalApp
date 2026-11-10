@@ -13,6 +13,7 @@ const EVENTS = Object.freeze({
   offer: 'call:offer',
   answer: 'call:answer',
   ice: 'call:ice',
+  restart: 'call:restart',
   end: 'call:end'
 });
 
@@ -116,6 +117,7 @@ function registerCallEvents(socket, { io, chat, getJoined, calls, store, env }) 
   forward(EVENTS.offer, EVENTS.offer);
   forward(EVENTS.answer, EVENTS.answer);
   forward(EVENTS.ice, EVENTS.ice);
+  forward(EVENTS.restart, EVENTS.restart);
   forward(EVENTS.end, EVENTS.end);
 
   socket.on('disconnect', async () => {

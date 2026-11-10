@@ -233,8 +233,7 @@ describe('WebRTC media and signaling recovery', () => {
   });
 
   test('socket reconnect derives the restored status from RTCPeerConnection state', () => {
-    expect(CALL_HOOK_SOURCE).toMatch(/peerState === 'connected' \? 'active'/);
-    expect(CALL_HOOK_SOURCE).toMatch(/peerState === 'failed' \|\| peerState === 'closed' \? 'failed'/);
-    expect(CALL_HOOK_SOURCE).toMatch(/peerState === 'disconnected' \? 'connecting'/);
+    expect(CALL_HOOK_SOURCE).toMatch(/status: restoredCallStatus\(peerState\)/);
+    expect(CALL_HOOK_SOURCE).toMatch(/scheduleRecovery\(current, peerState\)/);
   });
 });
