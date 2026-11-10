@@ -34,6 +34,25 @@ const row = (id, seq, extra = {}) => ({
   ...extra,
 });
 
+const transfer = (id, extra = {}) => ({
+  id,
+  room: ROOM,
+  messageId: 'm1',
+  name: 'clip.mp4',
+  mime: 'video/mp4',
+  size: 3 * 16384,
+  chunkBytes: 16384,
+  chunks: 3,
+  bitmap: new Uint8Array(1),
+  received: 0,
+  status: 'pending',
+  createdAt: BASE_TS,
+  updatedAt: BASE_TS,
+  completedAt: null,
+  error: null,
+  ...extra,
+});
+
 beforeEach(() => {
   installFakeIndexedDb();
   store = loadLocalStore();
@@ -45,11 +64,13 @@ describe('the schema', () => {
   it('creates the stores and indexes the read paths depend on', async () => {
     const db = await store.openLocalStore();
     expect([...db.objectStoreNames].sort()).toEqual([
-      'calls', 'media', 'messages', 'meta', 'outbox', 'profiles', 'rooms',
+      'calls', 'media', 'messages', 'meta', 'outbox', 'profiles', 'rooms', 'transfers',
     ].sort());
-    const tx = db.transaction('messages', 'readonly');
-    const names = tx.objectStore('messages').indexNames;
-    expect([...names].sort()).toEqual(['byRoomClient', 'byRoomSeq']);
+    const tx = db.transaction(['messages', 'transfers'], 'readonly');
+    const messageIndexes = tx.objectStore('messages').indexNames;
+    expect([...messageIndexes].sort()).toEqual(['byRoomClient', 'byRoomSeq']);
+    // Retention walks transfers by touch time; a resume reads by id.
+    expect([...tx.objectStore('transfers').indexNames]).toEqual(['byUpdatedAt']);
     tx.abort();
   });
 
@@ -67,6 +88,40 @@ describe('the schema', () => {
     const page = await reopened.readMessagePage(ROOM, { limit: 10 });
     expect(page.map((message) => message.id)).toEqual(['m1', 'm2']);
     await reopened.closeLocalStore();
+  });
+
+  it('adds the transfers store to a version 1 database without rebuilding it', async () => {
+    const legacy = await new Promise((resolve, reject) => {
+      const request = indexedDB.open(store.DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        const messages = db.createObjectStore('messages', { keyPath: ['room', 'id'] });
+        messages.createIndex('byRoomSeq', ['room', 'seq']);
+        messages.createIndex('byRoomClient', ['room', 'clientId']);
+        db.createObjectStore('rooms', { keyPath: 'room' });
+        db.createObjectStore('profiles', { keyPath: 'userId' });
+        db.createObjectStore('calls', { keyPath: 'id' });
+        db.createObjectStore('outbox', { keyPath: 'clientId' });
+        db.createObjectStore('media', { keyPath: 'id' }).createIndex('byStoredAt', 'storedAt');
+        db.createObjectStore('meta', { keyPath: 'key' });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise((resolve, reject) => {
+      const tx = legacy.transaction('messages', 'readwrite');
+      tx.objectStore('messages').put({ room: ROOM, ...row('kept', 1) });
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    legacy.close();
+
+    const upgraded = await store.openLocalStore();
+    expect(store.DB_VERSION).toBe(2);
+    expect([...upgraded.objectStoreNames]).toContain('transfers');
+    // The point of an additive upgrade: yesterday's history is still here.
+    const page = await store.readMessagePage(ROOM, { limit: 10 });
+    expect(page.map((message) => message.id)).toEqual(['kept']);
   });
 
   it('says which store it could not open instead of only failing', async () => {
@@ -361,6 +416,45 @@ describe('quota', () => {
   });
 });
 
+describe('transfers', () => {
+  it('keeps the ack bitmap across a page load', async () => {
+    const bitmap = new Uint8Array(1);
+    bitmap[0] = 0b00000101;
+    await store.saveTransfer(transfer('t1', { bitmap, received: 2, status: 'sending' }));
+    await store.closeLocalStore();
+
+    const reopened = loadLocalStore();
+    const saved = await reopened.readTransfer('t1');
+    expect(saved).toMatchObject({ id: 't1', received: 2, chunks: 3, status: 'sending' });
+    expect(Array.from(saved.bitmap)).toEqual([5]);
+    await reopened.closeLocalStore();
+  });
+
+  it('lists every record, and can narrow to those untouched past a limit', async () => {
+    await store.saveTransfer(transfer('old', { updatedAt: BASE_TS }));
+    await store.saveTransfer(transfer('new', { updatedAt: BASE_TS + 5000 }));
+
+    expect((await store.listTransfers()).map((entry) => entry.id).sort()).toEqual(['new', 'old']);
+    const stale = await store.listTransfers({ olderThanMs: 1000, now: BASE_TS + 5000 });
+    expect(stale.map((entry) => entry.id)).toEqual(['old']);
+  });
+
+  it('deletes one record without touching its neighbours', async () => {
+    await store.saveTransfer(transfer('a'));
+    await store.saveTransfer(transfer('b'));
+    expect(await store.deleteTransfer('a')).toBe(true);
+    expect(await store.readTransfer('a')).toBeNull();
+    expect(await store.readTransfer('b')).toMatchObject({ id: 'b' });
+  });
+
+  it('stamps a record written without a touch time', async () => {
+    const before = Date.now();
+    const saved = await store.saveTransfer(transfer('bare', { updatedAt: 0 }));
+    expect(saved.updatedAt).toBeGreaterThanOrEqual(before);
+    expect((await store.readTransfer('bare')).updatedAt).toBe(saved.updatedAt);
+  });
+});
+
 describe('retention', () => {
   const fill = async (room, count, ageMs) => {
     const rows = Array.from({ length: count }, (_, i) => row(`${room}-${i + 1}`, i + 1, { ts: BASE_TS - ageMs }));
@@ -403,6 +497,20 @@ describe('retention', () => {
     expect(await store.readOutbox()).toMatchObject([{ clientId: 'keep' }]);
   });
 
+  it('drops only transfers nobody has touched for a week', async () => {
+    const week = 7 * 24 * 3600 * 1000;
+    await store.saveTransfer(transfer('stale', { updatedAt: BASE_TS - 8 * 24 * 3600 * 1000, status: 'sending' }));
+    await store.saveTransfer(transfer('recent', { updatedAt: BASE_TS }));
+
+    const result = await store.enforceRetention({ now: BASE_TS });
+    expect(result).toMatchObject({ transfers: 1, media: 0, messages: 0 });
+    expect(await store.readTransfer('stale')).toBeNull();
+    expect(await store.readTransfer('recent')).toMatchObject({ id: 'recent' });
+    // The default TTL is what made that decision; a caller may shorten it.
+    const shortened = await store.enforceRetention({ now: BASE_TS, transferTtlMs: week + 1 });
+    expect(shortened.transfers).toBe(0);
+  });
+
   it('names the rooms it trimmed so the notice can say which', async () => {
     await fill(ROOM, store.PINNED_PER_ROOM + 3, 400 * 24 * 3600 * 1000);
     await fill(OTHER, 5, 400 * 24 * 3600 * 1000);
@@ -441,8 +549,12 @@ describe('a browser with no IndexedDB', () => {
     await expect(store.readCalls()).resolves.toEqual([]);
     await expect(store.readOutbox()).resolves.toEqual([]);
     await expect(store.listMedia()).resolves.toEqual([]);
+    await expect(store.saveTransfer(transfer('t1'))).resolves.toBeNull();
+    await expect(store.readTransfer('t1')).resolves.toBeNull();
+    await expect(store.listTransfers()).resolves.toEqual([]);
+    await expect(store.deleteTransfer('t1')).resolves.toBe(false);
     await expect(store.readMeta('k')).resolves.toBeNull();
-    await expect(store.enforceRetention()).resolves.toMatchObject({ media: 0, messages: 0 });
+    await expect(store.enforceRetention()).resolves.toMatchObject({ media: 0, messages: 0, transfers: 0 });
     await expect(store.wipeLocalStore()).resolves.toBeUndefined();
     await expect(store.closeLocalStore()).resolves.toBeUndefined();
   });

@@ -16,7 +16,7 @@
 
 export const DB_NAME = 'inchat-local'
 /** Every bump needs a matching branch in `upgrade`, and every branch only adds. */
-export const DB_VERSION = 1
+export const DB_VERSION = 2
 
 export const STORE_MESSAGES = 'messages'
 export const STORE_ROOMS = 'rooms'
@@ -24,11 +24,13 @@ export const STORE_PROFILES = 'profiles'
 export const STORE_CALLS = 'calls'
 export const STORE_OUTBOX = 'outbox'
 export const STORE_MEDIA = 'media'
+export const STORE_TRANSFERS = 'transfers'
 export const STORE_META = 'meta'
 
 const SEQ_INDEX = 'byRoomSeq'
 const CLIENT_INDEX = 'byRoomClient'
 const MEDIA_TIME_INDEX = 'byStoredAt'
+const TRANSFER_TIME_INDEX = 'byUpdatedAt'
 
 /**
  * Sequences the store mints start at 1 and never exceed what a JS integer can
@@ -49,6 +51,13 @@ export const PINNED_PER_ROOM = 60
 /** Roughly one month of attachments, three months of transcript. */
 export const DEFAULT_MEDIA_TTL_MS = 30 * 24 * 3600 * 1000
 export const DEFAULT_MESSAGE_TTL_MS = 90 * 24 * 3600 * 1000
+
+/**
+ * An unfinished transfer older than this cannot be resumed: the guest has long
+ * since moved on, and the record is a bitmap for a file this browser may no
+ * longer still hold. Seven days is long enough to survive a weekend.
+ */
+export const DEFAULT_TRANSFER_TTL_MS = 7 * 24 * 3600 * 1000
 
 let dbPromise = null
 let lastError = null
@@ -109,17 +118,29 @@ function openDatabase() {
   })
 }
 
+/**
+ * Only ever adds. A version branch must never delete or recreate a store: the
+ * next page load is the only thing standing between this file and somebody's
+ * history, and a rebuild here would pass every fresh-install test there is.
+ */
 function upgrade(db, oldVersion) {
-  if (oldVersion >= 1) return
-  const messages = db.createObjectStore(STORE_MESSAGES, { keyPath: ['room', 'id'] })
-  messages.createIndex(SEQ_INDEX, ['room', 'seq'])
-  messages.createIndex(CLIENT_INDEX, ['room', 'clientId'])
-  db.createObjectStore(STORE_ROOMS, { keyPath: 'room' })
-  db.createObjectStore(STORE_PROFILES, { keyPath: 'userId' })
-  db.createObjectStore(STORE_CALLS, { keyPath: 'id' })
-  db.createObjectStore(STORE_OUTBOX, { keyPath: 'clientId' })
-  db.createObjectStore(STORE_MEDIA, { keyPath: 'id' }).createIndex(MEDIA_TIME_INDEX, 'storedAt')
-  db.createObjectStore(STORE_META, { keyPath: 'key' })
+  if (oldVersion < 1) {
+    const messages = db.createObjectStore(STORE_MESSAGES, { keyPath: ['room', 'id'] })
+    messages.createIndex(SEQ_INDEX, ['room', 'seq'])
+    messages.createIndex(CLIENT_INDEX, ['room', 'clientId'])
+    db.createObjectStore(STORE_ROOMS, { keyPath: 'room' })
+    db.createObjectStore(STORE_PROFILES, { keyPath: 'userId' })
+    db.createObjectStore(STORE_CALLS, { keyPath: 'id' })
+    db.createObjectStore(STORE_OUTBOX, { keyPath: 'clientId' })
+    db.createObjectStore(STORE_MEDIA, { keyPath: 'id' }).createIndex(MEDIA_TIME_INDEX, 'storedAt')
+    db.createObjectStore(STORE_META, { keyPath: 'key' })
+  }
+  if (oldVersion < 2) {
+    // Keyed by the transfer id the sender minted, so a resume is a direct read
+    // and not a scan. The time index is what retention walks.
+    db.createObjectStore(STORE_TRANSFERS, { keyPath: 'id' })
+      .createIndex(TRANSFER_TIME_INDEX, 'updatedAt')
+  }
 }
 
 /** Releases the handle. A sign-out or a test is the only thing that needs it. */
@@ -693,6 +714,59 @@ export function deleteRoomMedia(room) {
   })).then((count) => count || 0)
 }
 
+/* ------------------------------------------------------------------ transfers */
+
+/**
+ * The progress of a file the guest started sending.
+ *
+ * This is the only row here that is not a copy of server state and not the
+ * outbox: it is a bitmap of slices the other side confirmed, and it exists so a
+ * reload resumes instead of restarting a file the guest already waited on. The
+ * bytes themselves are never stored - the file stays where the browser picked it
+ * from - so a record costs a few hundred bytes regardless of file size.
+ *
+ * A transfer is written before its first slice, updated after each ack, and
+ * only removed by retention or by an explicit cancel.
+ */
+export function saveTransfer(record) {
+  if (!record || !record.id) return Promise.resolve(null)
+  const row = { ...record, updatedAt: Number(record.updatedAt) || Date.now() }
+  return transact(STORE_TRANSFERS, 'readwrite', (store) => {
+    store.put(row)
+    return row
+  })
+}
+
+export function readTransfer(id) {
+  if (!id) return Promise.resolve(null)
+  return transact(STORE_TRANSFERS, 'readonly', (store) => requestResult(store.get(id)))
+    .then((row) => row || null)
+}
+
+/**
+ * Every stored transfer, or only those untouched for longer than `olderThanMs` -
+ * which is how retention finds its candidates without loading a record it is
+ * about to keep.
+ */
+export function listTransfers(options = {}) {
+  const now = Number(options.now) || Date.now()
+  const ttl = Number(options.olderThanMs)
+  const limit = Math.max(1, Number(options.limit) || 200)
+  return transact(STORE_TRANSFERS, 'readonly', (store) => (
+    Number.isFinite(ttl)
+      ? requestResult(store.index(TRANSFER_TIME_INDEX).getAll(IDBKeyRange.upperBound(now - ttl)))
+      : requestResult(store.getAll())
+  )).then((rows) => (rows || []).slice(0, limit))
+}
+
+export function deleteTransfer(id) {
+  if (!id) return Promise.resolve(false)
+  return transact(STORE_TRANSFERS, 'readwrite', (store) => {
+    store.delete(id)
+    return true
+  }).then((done) => Boolean(done))
+}
+
 /* ----------------------------------------------------------------------- meta */
 
 export function readMeta(key) {
@@ -751,11 +825,13 @@ export function requestPersistence() {
  * Frees space in a defined order and reports what went.
  *
  * Attachment metadata older than its TTL first - it describes bytes that are
- * already gone from the server anyway. Then transcript rows older than theirs,
- * and only ever outside the newest `PINNED_PER_ROOM` of a room, so cleanup can
- * never be the reason the last screen of a conversation vanished. The outbox is
- * not a candidate at any age: an unsent message is the only unrecoverable row in
- * this database.
+ * already gone from the server anyway. Then transfer records nobody has touched
+ * for a week; those describe a file the guest is no longer sending. Then
+ * transcript rows older than theirs, and only ever outside the newest
+ * `PINNED_PER_ROOM` of a room, so cleanup can never be the reason the last
+ * screen of a conversation vanished. The outbox is not a candidate at any age: an
+ * unsent message is the only unrecoverable row in this database, and an
+ * unfinished transfer is second only because the file itself still exists.
  *
  * Everything removed is counted and returned so the caller can say so out loud.
  * Quietly deleting somebody's chat history is the outcome this module exists to
@@ -765,16 +841,21 @@ export function enforceRetention(options = {}) {
   const now = Number(options.now) || Date.now()
   const mediaTtl = Number(options.mediaTtlMs) || DEFAULT_MEDIA_TTL_MS
   const messageTtl = Number(options.messageTtlMs) || DEFAULT_MESSAGE_TTL_MS
+  const transferTtl = Number(options.transferTtlMs) || DEFAULT_TRANSFER_TTL_MS
   const messageThreshold = now - messageTtl
-  const nothing = { media: 0, messages: 0, rooms: [], pinned: PINNED_PER_ROOM }
+  const nothing = { media: 0, messages: 0, transfers: 0, rooms: [], pinned: PINNED_PER_ROOM }
   return Promise.all([
     listMedia({ olderThanMs: mediaTtl, now }),
     listRoomStates(),
-  ]).then(([stale, states]) => transact([STORE_MEDIA, STORE_MESSAGES], 'readwrite', (tx) => {
+    listTransfers({ olderThanMs: transferTtl, now }),
+  ]).then(([stale, states, staleTransfers]) => transact([STORE_MEDIA, STORE_MESSAGES, STORE_TRANSFERS], 'readwrite', (tx) => {
     const mediaStore = tx.objectStore(STORE_MEDIA)
     const messageStore = tx.objectStore(STORE_MESSAGES)
+    const transferStore = tx.objectStore(STORE_TRANSFERS)
     const mediaIds = [...new Set((stale || []).map((row) => row.id))]
     mediaIds.forEach((id) => mediaStore.delete(id))
+    const transferIds = [...new Set((staleTransfers || []).map((row) => row.id))]
+    transferIds.forEach((id) => transferStore.delete(id))
     return Promise.all((states || []).map((state) => (
       state && state.room
         ? requestResult(messageStore.index(SEQ_INDEX).getAll(roomSeqRange(state.room))).then((rows) => {
@@ -788,6 +869,7 @@ export function enforceRetention(options = {}) {
     ))).then((perRoom) => ({
       media: mediaIds.length,
       messages: perRoom.reduce((sum, entry) => sum + entry.count, 0),
+      transfers: transferIds.length,
       rooms: perRoom.filter((entry) => entry.count > 0),
       pinned: PINNED_PER_ROOM,
     }))

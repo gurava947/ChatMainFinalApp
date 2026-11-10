@@ -67,6 +67,14 @@ const CALL_RECOVERY_EXPORTS = [
   'recoveryAction', 'recoveryGrace', 'restoredCallStatus',
 ];
 
+/** Resumable file transfers: chunk math, the ack bitmap and record lifecycle. */
+const TRANSFER_EXPORTS = [
+  'TRANSFER_CHUNK_BYTES', 'TRANSFER_MAX_BYTES',
+  'chunkCountFor', 'chunkRange', 'createBitmap', 'markChunk', 'hasChunk',
+  'receivedCount', 'firstMissingChunk', 'isComplete', 'transferProgress',
+  'createTransferRecord', 'ackChunk', 'canResume', 'failTransfer',
+];
+
 /** The 24-hour status feed (P8): palette, countdown, ordering and viewer copy. */
 const STATUS_FEED_EXPORTS = [
   'STATUS_PALETTE', 'STATUS_TEXT_MAX', 'timeLeftLabel', 'isLive', 'hasUnseen', 'pickColor',
@@ -95,8 +103,8 @@ const PREFERENCE_EXPORTS = [
  */
 const LOCAL_STORE_EXPORTS = [
   'DB_NAME', 'DB_VERSION', 'MIN_SEQ', 'MAX_SEQ', 'PINNED_PER_ROOM',
-  'DEFAULT_MEDIA_TTL_MS', 'DEFAULT_MESSAGE_TTL_MS',
-  'STORE_MESSAGES', 'STORE_ROOMS', 'STORE_PROFILES', 'STORE_CALLS', 'STORE_OUTBOX', 'STORE_MEDIA', 'STORE_META',
+  'DEFAULT_MEDIA_TTL_MS', 'DEFAULT_MESSAGE_TTL_MS', 'DEFAULT_TRANSFER_TTL_MS',
+  'STORE_MESSAGES', 'STORE_ROOMS', 'STORE_PROFILES', 'STORE_CALLS', 'STORE_OUTBOX', 'STORE_MEDIA', 'STORE_TRANSFERS', 'STORE_META',
   'supportsLocalStore', 'storageAvailable', 'localStoreError', 'openLocalStore', 'closeLocalStore', 'wipeLocalStore',
   'isQuotaError', 'storableRows', 'messageRecord', 'mergeRecord',
   'storeMessages', 'readMessagePage', 'readOlderMessages', 'readNewerMessages',
@@ -106,6 +114,7 @@ const LOCAL_STORE_EXPORTS = [
   'storeCalls', 'readCalls', 'clearCalls',
   'queueOutbox', 'readOutbox', 'bumpOutboxTries', 'resolveOutbox', 'clearOutbox',
   'storeMedia', 'readMedia', 'listMedia', 'deleteMedia', 'deleteRoomMedia',
+  'saveTransfer', 'readTransfer', 'listTransfers', 'deleteTransfer',
   'readMeta', 'writeMeta',
   'readUsage', 'requestPersistence', 'enforceRetention',
 ];
@@ -180,6 +189,10 @@ function loadCallRecovery() {
   return loadClientModule('callRecovery.js', CALL_RECOVERY_EXPORTS);
 }
 
+function loadTransferProtocol() {
+  return loadClientModule('transferProtocol.js', TRANSFER_EXPORTS);
+}
+
 function loadStatusFeed() {
   return loadClientModule('statusFeed.js', STATUS_FEED_EXPORTS);
 }
@@ -206,8 +219,8 @@ function loadPreferences() {
 
 module.exports = {
   loadRoomChat, loadRichCards, loadA11y, loadMediaPrepare, loadCallWindow, loadNotifications,
-  loadCallHistory, loadIceCache, loadCallRecovery, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
+  loadCallHistory, loadIceCache, loadCallRecovery, loadTransferProtocol, loadStatusFeed, loadShortsFeed, loadLocalStore, loadTranscript, loadEmoji, loadPreferences,
   ROOM_CHAT_EXPORTS, RICH_CARD_EXPORTS, A11Y_EXPORTS, MEDIA_PREPARE_EXPORTS, CALL_WINDOW_EXPORTS,
-  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, ICE_CACHE_EXPORTS, CALL_RECOVERY_EXPORTS, STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS,
-  LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS, PREFERENCE_EXPORTS,
+  NOTIFICATION_EXPORTS, CALL_HISTORY_EXPORTS, ICE_CACHE_EXPORTS, CALL_RECOVERY_EXPORTS, TRANSFER_EXPORTS,
+  STATUS_FEED_EXPORTS, SHORTS_FEED_EXPORTS, LOCAL_STORE_EXPORTS, TRANSCRIPT_EXPORTS, EMOJI_EXPORTS, PREFERENCE_EXPORTS,
 };
