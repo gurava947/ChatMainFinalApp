@@ -111,6 +111,23 @@ The operational choice is binary: self-host coturn (or another relay) and set
 `TURN_URLS` + `TURN_SHARED_SECRET`, or explicitly accept that restrictive-NAT
 calls fail. There is no paid signaling or media proxy in either branch.
 
+Decision (2026-11-10): a relay is deployed. coturn runs on a self-hosted
+Ubuntu EC2 instance in Mumbai under the AWS Free plan credits, configured with
+`use-auth-secret` + `static-auth-secret` (the same secret stored as
+`TURN_SHARED_SECRET` in Vercel production; `TURN_URLS` points at its public IP
+on port 3478) and `denied-peer-ip` covering the RFC1918 and loopback ranges so
+the relay cannot be aimed at private networks. Two AWS specifics matter: the
+instance only sees its private IP, so `turnserver.conf` carries
+`external-ip=<public-ip>/<private-ip>` or every relay candidate advertises an
+unreachable address; and the security group must open TCP+UDP 3478 plus the
+relay UDP range (49152-49252 here). Verified end-to-end from a real browser on
+the public internet: production `/api/rtc-config` returned short-lived
+credentials and ICE gathering produced a `typ relay` candidate on the public
+IP. The Free plan expires six months after signup (~2027-05); if the instance
+goes away the app degrades to STUN-only and restrictive-NAT calls fail with
+the explicit message above — re-provision coturn anywhere and the same two env
+vars restore the relay.
+
 ## Free-tier budget
 
 Allowances verified 2026-11-10 against [Vercel Hobby](https://vercel.com/docs/plans/hobby)
